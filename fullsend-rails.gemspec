@@ -6,7 +6,6 @@ Gem::Specification.new do |spec|
   spec.name          = "fullsend-rails"
   spec.version       = Fullsend::VERSION
   spec.authors       = ["ProTrainings"]
-  spec.email         = ["dev@protrainings.com"]
   spec.summary       = "SQS-based ActionMailer delivery for the Fullsend email service"
   spec.description   = "Rails gem providing an ActionMailer delivery method that sends emails as JSON to an SQS FIFO queue, plus campaign tracking header helpers."
   spec.homepage      = "https://github.com/protrainings/fullsend-rails"
