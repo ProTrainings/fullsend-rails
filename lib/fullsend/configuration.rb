@@ -1,16 +1,16 @@
 module Fullsend
   class Configuration
-    attr_accessor :queue_name, :configuration_set_name, :message_group_id
+    attr_accessor :queue_name, :fullsend_app_id, :message_group_id
 
     def initialize
-      @queue_name              = ENV["SQS_EMAIL_QUEUE_NAME"]
-      @configuration_set_name  = nil
-      @message_group_id        = nil
+      @queue_name        = ENV["SQS_EMAIL_QUEUE_NAME"]
+      @fullsend_app_id   = nil
+      @message_group_id  = nil
     end
 
     def validate!
-      if configuration_set_name.nil? || configuration_set_name.empty?
-        raise ConfigurationError, "configuration_set_name is required. Set it via Fullsend.configure."
+      if fullsend_app_id.nil? || fullsend_app_id.empty?
+        raise ConfigurationError, "fullsend_app_id is required. Set it via Fullsend.configure."
       end
 
       if message_group_id.nil? || message_group_id.empty?

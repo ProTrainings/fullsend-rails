@@ -14,9 +14,9 @@ RSpec.describe Fullsend::Configuration do
       expect(config.queue_name).to be_nil
     end
 
-    it "has nil configuration_set_name by default" do
+    it "has nil fullsend_app_id by default" do
       config = described_class.new
-      expect(config.configuration_set_name).to be_nil
+      expect(config.fullsend_app_id).to be_nil
     end
 
     it "has nil message_group_id by default" do
@@ -26,21 +26,21 @@ RSpec.describe Fullsend::Configuration do
   end
 
   describe "#validate!" do
-    it "raises ConfigurationError when configuration_set_name is nil" do
+    it "raises ConfigurationError when fullsend_app_id is nil" do
       config = described_class.new
       config.message_group_id = "test"
-      expect { config.validate! }.to raise_error(Fullsend::ConfigurationError, /configuration_set_name/)
+      expect { config.validate! }.to raise_error(Fullsend::ConfigurationError, /fullsend_app_id/)
     end
 
     it "raises ConfigurationError when message_group_id is nil" do
       config = described_class.new
-      config.configuration_set_name = "test"
+      config.fullsend_app_id = "test"
       expect { config.validate! }.to raise_error(Fullsend::ConfigurationError, /message_group_id/)
     end
 
     it "does not raise when all required fields are set" do
       config = described_class.new
-      config.configuration_set_name = "MyApp"
+      config.fullsend_app_id = "MyApp"
       config.message_group_id = "my-app"
       expect { config.validate! }.not_to raise_error
     end

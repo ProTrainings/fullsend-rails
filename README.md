@@ -19,9 +19,9 @@ Create an initializer:
 ```ruby
 # config/initializers/fullsend.rb
 Fullsend.configure do |config|
-  config.queue_name              = ENV.fetch("SQS_EMAIL_QUEUE_NAME")
-  config.configuration_set_name  = ENV.fetch("FULLSEND_CONFIG_SET", "MyApp")
-  config.message_group_id        = ENV.fetch("FULLSEND_MESSAGE_GROUP", "my-app-emailer")
+  config.queue_name        = ENV.fetch("SQS_EMAIL_QUEUE_NAME")
+  config.fullsend_app_id   = ENV.fetch("FULLSEND_APP_ID", "MyApp")
+  config.message_group_id  = ENV.fetch("FULLSEND_MESSAGE_GROUP", "my-app-emailer")
 end
 ```
 

@@ -68,8 +68,8 @@ module Fullsend
         message_body: message_json,
         message_deduplication_id: SecureRandom.uuid,
         message_attributes: {
-          "configuration-set-name" => {
-            string_value: config.configuration_set_name,
+          "app_id" => {
+            string_value: config.fullsend_app_id,
             data_type: "String"
           }
         }

@@ -18,7 +18,7 @@ RSpec.describe Fullsend::Delivery do
 
   before do
     Fullsend.configure do |c|
-      c.configuration_set_name = "TestApp"
+      c.fullsend_app_id = "TestApp"
       c.message_group_id = "test-app-emailer"
     end
 
@@ -51,7 +51,7 @@ RSpec.describe Fullsend::Delivery do
       end
     end
 
-    it "includes configuration_set_name as SQS message attribute" do
+    it "includes fullsend_app_id as SQS message attribute" do
       mail = Mail.new do
         from    "a@b.com"
         to      "c@d.com"
@@ -63,7 +63,7 @@ RSpec.describe Fullsend::Delivery do
       delivery.deliver!(mail)
 
       expect(sqs_client).to have_received(:send_message) do |args|
-        attr = args[:message_attributes]["configuration-set-name"]
+        attr = args[:message_attributes]["app_id"]
         expect(attr[:string_value]).to eq("TestApp")
         expect(attr[:data_type]).to eq("String")
       end
