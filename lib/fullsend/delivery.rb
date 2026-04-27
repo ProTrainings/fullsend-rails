@@ -21,14 +21,7 @@ module Fullsend
 
       def sqs_client
         @mutex.synchronize do
-          @sqs_client ||= begin
-            config = Fullsend.configuration
-            creds = config.resolve_aws_credentials
-            Aws::SQS::Client.new(
-              region: creds[:region],
-              credentials: Aws::Credentials.new(creds[:access_key_id], creds[:secret_access_key])
-            )
-          end
+          @sqs_client ||= Aws::SQS::Client.new(Fullsend.configuration.aws_client_options)
         end
       end
 
@@ -88,8 +81,19 @@ module Fullsend
         subject: mail.subject
       }
 
+      extract_template(mail, message)
       extract_ses_tags(mail, message)
       message
+    end
+
+    def extract_template(mail, message)
+      return unless mail.header["X-Fullsend-Template"].present?
+
+      template = JSON.parse(mail.header["X-Fullsend-Template"].value)
+      message[:templateName] = template["name"] if template["name"]
+      message[:templateData] = template["data"] if template.key?("data")
+    rescue JSON::ParserError
+      warn "[Fullsend] Failed to parse X-Fullsend-Template header: #{mail.header["X-Fullsend-Template"].value}"
     end
 
     def extract_ses_tags(mail, message)

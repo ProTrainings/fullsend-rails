@@ -16,6 +16,12 @@ module Fullsend
       apply_provider_headers("X-SES-API", **args)
     end
 
+    def set_template(name, data: nil)
+      payload = { name: name }
+      payload[:data] = data unless data.nil?
+      headers["X-Fullsend-Template"] = payload.to_json
+    end
+
     def apply_provider_headers(header_key, **args)
       calling_method = args[:campaign_id] || caller_locations(1, 1)[0].label
       calling_method = "" if calling_method == "irb_binding"

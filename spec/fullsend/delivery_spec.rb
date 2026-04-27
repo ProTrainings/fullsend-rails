@@ -188,6 +188,66 @@ RSpec.describe Fullsend::Delivery do
       expect(sqs_client).to have_received(:get_queue_url).once
     end
 
+    it "extracts X-Fullsend-Template header into templateName and templateData" do
+      mail = Mail.new do
+        from    "a@b.com"
+        to      "c@d.com"
+        subject "Test"
+        body    "body"
+      end
+      mail.header["X-Fullsend-Template"] = {
+        name: "welcome-v1",
+        data: { user_id: 42 }
+      }.to_json
+
+      delivery = described_class.new({})
+      delivery.deliver!(mail)
+
+      expect(sqs_client).to have_received(:send_message) do |args|
+        body = JSON.parse(args[:message_body])
+        expect(body["templateName"]).to eq("welcome-v1")
+        expect(body["templateData"]).to eq({ "user_id" => 42 })
+      end
+    end
+
+    it "omits templateData when not provided" do
+      mail = Mail.new do
+        from    "a@b.com"
+        to      "c@d.com"
+        subject "Test"
+        body    "body"
+      end
+      mail.header["X-Fullsend-Template"] = { name: "welcome-v1" }.to_json
+
+      delivery = described_class.new({})
+      delivery.deliver!(mail)
+
+      expect(sqs_client).to have_received(:send_message) do |args|
+        body = JSON.parse(args[:message_body])
+        expect(body["templateName"]).to eq("welcome-v1")
+        expect(body).not_to have_key("templateData")
+      end
+    end
+
+    it "gracefully handles malformed X-Fullsend-Template header" do
+      mail = Mail.new do
+        from    "a@b.com"
+        to      "c@d.com"
+        subject "Test"
+        body    "body"
+      end
+      mail.header["X-Fullsend-Template"] = "not-valid-json{"
+
+      delivery = described_class.new({})
+      delivery.deliver!(mail)
+
+      expect(sqs_client).to have_received(:send_message) do |args|
+        body = JSON.parse(args[:message_body])
+        expect(body).not_to have_key("templateName")
+        expect(body).not_to have_key("templateData")
+      end
+    end
+
     it "handles cc and bcc addresses" do
       mail = Mail.new do
         from    "a@b.com"

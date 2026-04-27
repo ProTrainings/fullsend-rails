@@ -46,7 +46,7 @@ RSpec.describe Fullsend::Configuration do
     end
   end
 
-  describe "#resolve_aws_credentials" do
+  describe "#aws_client_options" do
     context "when ENV vars are set" do
       before do
         allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
@@ -55,12 +55,14 @@ RSpec.describe Fullsend::Configuration do
         allow(ENV).to receive(:[]).with("AWS_REGION").and_return("us-east-1")
       end
 
-      it "returns credentials from ENV" do
+      it "returns explicit credentials and region" do
+        require "aws-sdk-sqs"
         config = described_class.new
-        creds = config.resolve_aws_credentials
-        expect(creds[:access_key_id]).to eq("env-key")
-        expect(creds[:secret_access_key]).to eq("env-secret")
-        expect(creds[:region]).to eq("us-east-1")
+        opts = config.aws_client_options
+        expect(opts[:credentials]).to be_a(Aws::Credentials)
+        expect(opts[:credentials].access_key_id).to eq("env-key")
+        expect(opts[:credentials].secret_access_key).to eq("env-secret")
+        expect(opts[:region]).to eq("us-east-1")
       end
     end
 
@@ -83,11 +85,40 @@ RSpec.describe Fullsend::Configuration do
       end
 
       it "falls back to Rails credentials" do
+        require "aws-sdk-sqs"
         config = described_class.new
-        creds = config.resolve_aws_credentials
-        expect(creds[:access_key_id]).to eq("cred-key")
-        expect(creds[:secret_access_key]).to eq("cred-secret")
-        expect(creds[:region]).to eq("us-west-2")
+        opts = config.aws_client_options
+        expect(opts[:credentials].access_key_id).to eq("cred-key")
+        expect(opts[:credentials].secret_access_key).to eq("cred-secret")
+        expect(opts[:region]).to eq("us-west-2")
+      end
+    end
+
+    context "when Rails credentials use access_key/secret_key keys" do
+      before do
+        allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
+        allow(ENV).to receive(:[]).with("AWS_ACCESS_KEY_ID").and_return(nil)
+        allow(ENV).to receive(:[]).with("AWS_SECRET_ACCESS_KEY").and_return(nil)
+        allow(ENV).to receive(:[]).with("AWS_REGION").and_return(nil)
+
+        rails_app = double("Rails.application")
+        credentials = double("credentials")
+        allow(credentials).to receive(:aws).and_return({
+          access_key: "legacy-key",
+          secret_key: "legacy-secret",
+          region: "us-east-2"
+        })
+        allow(rails_app).to receive(:credentials).and_return(credentials)
+        stub_const("Rails", double("Rails", application: rails_app))
+      end
+
+      it "accepts the legacy key names" do
+        require "aws-sdk-sqs"
+        config = described_class.new
+        opts = config.aws_client_options
+        expect(opts[:credentials].access_key_id).to eq("legacy-key")
+        expect(opts[:credentials].secret_access_key).to eq("legacy-secret")
+        expect(opts[:region]).to eq("us-east-2")
       end
     end
 
@@ -99,10 +130,10 @@ RSpec.describe Fullsend::Configuration do
         allow(ENV).to receive(:[]).with("AWS_REGION").and_return(nil)
       end
 
-      it "raises ConfigurationError when Rails is not defined" do
+      it "returns empty options so the SDK uses its default credential chain" do
         hide_const("Rails")
         config = described_class.new
-        expect { config.resolve_aws_credentials }.to raise_error(Fullsend::ConfigurationError, /AWS credentials/)
+        expect(config.aws_client_options).to eq({})
       end
     end
   end

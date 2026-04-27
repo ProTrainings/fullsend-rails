@@ -18,29 +18,50 @@ module Fullsend
       end
     end
 
-    def resolve_aws_credentials
+    # Returns options to pass to Aws::SQS::Client.new. Explicit credentials
+    # are only included when found in env vars or Rails encrypted credentials;
+    # otherwise the SDK's default credential chain (Aws.config, instance
+    # profile, shared config, etc.) is used.
+    def aws_client_options
+      options = {}
+
+      env_creds = aws_env_credentials
+      rails_creds = aws_rails_credentials
+
+      if env_creds
+        options[:credentials] = Aws::Credentials.new(env_creds[:access_key_id], env_creds[:secret_access_key])
+        options[:region] = env_creds[:region] if env_creds[:region]
+      elsif rails_creds && rails_creds[:access_key_id] && rails_creds[:secret_access_key]
+        options[:credentials] = Aws::Credentials.new(rails_creds[:access_key_id], rails_creds[:secret_access_key])
+        options[:region] = rails_creds[:region] if rails_creds[:region]
+      elsif rails_creds && rails_creds[:region]
+        options[:region] = rails_creds[:region]
+      end
+
+      options
+    end
+
+    private
+
+    def aws_env_credentials
       access_key_id     = ENV["AWS_ACCESS_KEY_ID"]
       secret_access_key = ENV["AWS_SECRET_ACCESS_KEY"]
-      region            = ENV["AWS_REGION"]
+      return nil unless access_key_id && secret_access_key
 
-      if access_key_id && secret_access_key && region
-        return { access_key_id: access_key_id, secret_access_key: secret_access_key, region: region }
-      end
+      { access_key_id: access_key_id, secret_access_key: secret_access_key, region: ENV["AWS_REGION"] }
+    end
 
-      if defined?(Rails) && Rails.application.respond_to?(:credentials)
-        aws = Rails.application.credentials.aws
-        if aws
-          return {
-            access_key_id: aws[:access_key_id],
-            secret_access_key: aws[:secret_access_key],
-            region: aws[:region]
-          }
-        end
-      end
+    def aws_rails_credentials
+      return nil unless defined?(Rails) && Rails.application.respond_to?(:credentials)
 
-      raise ConfigurationError,
-        "AWS credentials not found. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_REGION " \
-        "environment variables, or configure Rails encrypted credentials under credentials.aws."
+      aws = Rails.application.credentials.aws
+      return nil unless aws
+
+      {
+        access_key_id: aws[:access_key_id] || aws[:access_key],
+        secret_access_key: aws[:secret_access_key] || aws[:secret_key],
+        region: aws[:region]
+      }
     end
   end
 end

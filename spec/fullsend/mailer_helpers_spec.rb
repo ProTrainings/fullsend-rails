@@ -88,6 +88,24 @@ RSpec.describe Fullsend::MailerHelpers do
     end
   end
 
+  describe "#set_template" do
+    it "writes name into the X-Fullsend-Template header" do
+      mailer.set_template("welcome-v1")
+      header = JSON.parse(mailer.headers["X-Fullsend-Template"])
+
+      expect(header["name"]).to eq("welcome-v1")
+      expect(header).not_to have_key("data")
+    end
+
+    it "includes data when provided" do
+      mailer.set_template("welcome-v1", data: { user_id: 42, plan: "pro" })
+      header = JSON.parse(mailer.headers["X-Fullsend-Template"])
+
+      expect(header["name"]).to eq("welcome-v1")
+      expect(header["data"]).to eq({ "user_id" => 42, "plan" => "pro" })
+    end
+  end
+
   describe "caller_locations integration" do
     # This test verifies the critical caller_locations fix:
     # set_ses_headers resolves the caller at depth 1, which is the
