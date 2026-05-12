@@ -89,20 +89,31 @@ RSpec.describe Fullsend::MailerHelpers do
   end
 
   describe "#set_template" do
-    it "writes name into the X-Fullsend-Template header" do
-      mailer.set_template("welcome-v1")
+    it "writes name and destinations into the X-Fullsend-Template header" do
+      destinations = [
+        { to: "a@example.com", data: { first_name: "Ada" } },
+        { to: "b@example.com", data: { first_name: "Babbage" } }
+      ]
+      mailer.set_template("welcome-v1", destinations: destinations)
       header = JSON.parse(mailer.headers["X-Fullsend-Template"])
 
       expect(header["name"]).to eq("welcome-v1")
-      expect(header).not_to have_key("data")
+      expect(header["destinations"]).to eq([
+        { "to" => "a@example.com", "data" => { "first_name" => "Ada" } },
+        { "to" => "b@example.com", "data" => { "first_name" => "Babbage" } }
+      ])
     end
 
-    it "includes data when provided" do
-      mailer.set_template("welcome-v1", data: { user_id: 42, plan: "pro" })
+    it "requires the destinations keyword argument" do
+      expect { mailer.set_template("welcome-v1") }.to raise_error(ArgumentError)
+    end
+
+    it "accepts an empty destinations array" do
+      mailer.set_template("welcome-v1", destinations: [])
       header = JSON.parse(mailer.headers["X-Fullsend-Template"])
 
       expect(header["name"]).to eq("welcome-v1")
-      expect(header["data"]).to eq({ "user_id" => 42, "plan" => "pro" })
+      expect(header["destinations"]).to eq([])
     end
   end
 
