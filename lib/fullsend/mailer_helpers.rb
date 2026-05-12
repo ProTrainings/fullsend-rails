@@ -16,10 +16,9 @@ module Fullsend
       apply_provider_headers("X-SES-API", **args)
     end
 
-    def set_template(name, data: nil)
-      payload = { name: name }
-      payload[:data] = data unless data.nil?
-      headers["X-Fullsend-Template"] = payload.to_json
+    def set_template(name, destinations:)
+      headers["X-Fullsend-Template"] =
+        { name: name, destinations: destinations }.to_json
     end
 
     def apply_provider_headers(header_key, **args)
