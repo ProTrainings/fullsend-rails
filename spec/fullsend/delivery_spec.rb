@@ -62,7 +62,7 @@ RSpec.describe Fullsend::Delivery do
       end
     end
 
-    it "omits the legacy body/toAddresses/ccAddresses/bccAddresses/subject/templateData fields" do
+    it "omits body/toAddresses/ccAddresses/bccAddresses/subject/templateData on the templated path" do
       mail = template_mail
       mail.header["X-SES-API"] = { campaign_id: "welcome" }.to_json
 
@@ -73,6 +73,66 @@ RSpec.describe Fullsend::Delivery do
         body = JSON.parse(args[:message_body])
         %w[body toAddresses ccAddresses bccAddresses subject templateData].each do |key|
           expect(body).not_to have_key(key), "expected payload not to include #{key.inspect}"
+        end
+      end
+    end
+
+    context "when no template header is set (non-templated email)" do
+      it "sends body/toAddresses/fromAddress/subject" do
+        mail = Mail.new do
+          from    "App <noreply@example.com>"
+          to      "user@example.com"
+          subject "Welcome"
+          body    "Hello there"
+        end
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(sqs_client).to have_received(:send_message) do |args|
+          body = JSON.parse(args[:message_body])
+          expect(body["toAddresses"]).to eq(["user@example.com"])
+          expect(body["fromAddress"]).to eq(["App <noreply@example.com>"])
+          expect(body["subject"]).to eq("Welcome")
+          expect(body["body"]).to eq("Hello there")
+        end
+      end
+
+      it "includes cc and bcc addresses" do
+        mail = Mail.new do
+          from    "a@b.com"
+          to      "c@d.com"
+          cc      "cc@d.com"
+          bcc     "bcc@d.com"
+          subject "Test"
+          body    "body"
+        end
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(sqs_client).to have_received(:send_message) do |args|
+          body = JSON.parse(args[:message_body])
+          expect(body["ccAddresses"]).to eq(["cc@d.com"])
+          expect(body["bccAddresses"]).to eq(["bcc@d.com"])
+        end
+      end
+
+      it "does not include templateName or destinations" do
+        mail = Mail.new do
+          from    "a@b.com"
+          to      "c@d.com"
+          subject "Test"
+          body    "body"
+        end
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(sqs_client).to have_received(:send_message) do |args|
+          body = JSON.parse(args[:message_body])
+          expect(body).not_to have_key("templateName")
+          expect(body).not_to have_key("destinations")
         end
       end
     end

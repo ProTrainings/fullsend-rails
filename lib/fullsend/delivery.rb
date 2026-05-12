@@ -72,7 +72,19 @@ module Fullsend
     private
 
     def build_message(mail)
-      message = { fromAddress: mail["from"]&.formatted }
+      message =
+        if mail.header["X-Fullsend-Template"].present?
+          { fromAddress: mail["from"]&.formatted }
+        else
+          {
+            body: mail.body.raw_source,
+            toAddresses: mail["to"]&.formatted,
+            ccAddresses: mail["cc"]&.formatted,
+            bccAddresses: mail["bcc"]&.formatted,
+            fromAddress: mail["from"]&.formatted,
+            subject: mail.subject
+          }
+        end
 
       extract_template(mail, message)
       extract_ses_tags(mail, message)

@@ -69,6 +69,20 @@ end
 set_ses_headers(campaign_id: "custom_campaign", tags: ["promo"])
 ```
 
+## Non-Templated Emails
+
+Standard `ActionMailer` usage works as you'd expect — `to`, `cc`, `bcc`,
+`subject`, and the body are passed through to the SQS payload as
+`toAddresses`, `ccAddresses`, `bccAddresses`, `subject`, and `body`:
+
+```ruby
+class UserMailer < ApplicationMailer
+  def welcome(user)
+    mail(to: user.email, subject: "Welcome")
+  end
+end
+```
+
 ## Templates and Bulk Destinations
 
 Send one SQS message per campaign batch, with per-recipient Mustache data.
