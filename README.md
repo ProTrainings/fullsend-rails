@@ -69,6 +69,42 @@ end
 set_ses_headers(campaign_id: "custom_campaign", tags: ["promo"])
 ```
 
+## Templates and Bulk Destinations
+
+Send one SQS message per campaign batch, with per-recipient Mustache data.
+`destinations` is an array of `{ to:, data: }` entries (mapped onto AWS SES
+`SendBulkTemplatedEmail` downstream, which caps each call at 50 destinations).
+
+```ruby
+class CampaignMailer < ApplicationMailer
+  def welcome_batch(users)
+    destinations = users.map do |user|
+      { to: user.email, data: { first_name: user.first_name } }
+    end
+
+    set_template("welcome-v1", destinations: destinations)
+    mail(from: "App <noreply@example.com>")
+  end
+end
+```
+
+The gem emits an SQS message of the form:
+
+```json
+{
+  "templateName": "welcome-v1",
+  "fromAddress": ["App <noreply@example.com>"],
+  "destinations": [
+    { "to": "user@example.com", "data": { "first_name": "Ada" } }
+  ],
+  "emailTags": [ ... ]
+}
+```
+
+`destinations` is authoritative: per-recipient `to` addresses and Mustache
+`data` live there. Do not set `to`, `cc`, `bcc`, `subject`, or a body on the
+`Mail` object — those fields are no longer included in the payload.
+
 ## License
 
 MIT

@@ -72,14 +72,7 @@ module Fullsend
     private
 
     def build_message(mail)
-      message = {
-        body: mail.body.raw_source,
-        toAddresses: mail["to"]&.formatted,
-        ccAddresses: mail["cc"]&.formatted,
-        bccAddresses: mail["bcc"]&.formatted,
-        fromAddress: mail["from"]&.formatted,
-        subject: mail.subject
-      }
+      message = { fromAddress: mail["from"]&.formatted }
 
       extract_template(mail, message)
       extract_ses_tags(mail, message)
@@ -91,7 +84,7 @@ module Fullsend
 
       template = JSON.parse(mail.header["X-Fullsend-Template"].value)
       message[:templateName] = template["name"] if template["name"]
-      message[:templateData] = template["data"] if template.key?("data")
+      message[:destinations] = template["destinations"] if template.key?("destinations")
     rescue JSON::ParserError
       warn "[Fullsend] Failed to parse X-Fullsend-Template header: #{mail.header["X-Fullsend-Template"].value}"
     end
