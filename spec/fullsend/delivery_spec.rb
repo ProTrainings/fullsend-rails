@@ -30,18 +30,20 @@ RSpec.describe Fullsend::Delivery do
     described_class.reset!
   end
 
-  def template_mail(template_name: "welcome-v1", destinations: [{ to: "user@example.com", data: { first_name: "Ada" } }])
+  def template_mail(template_name: "welcome-v1", destinations: [{ to: "user@example.com", data: { first_name: "Ada" } }], subject: "Welcome")
     mail = Mail.new do
       from "App <noreply@example.com>"
     end
+    mail.subject = subject if subject
     mail.header["X-Fullsend-Template"] = { name: template_name, destinations: destinations }.to_json
     mail
   end
 
   describe "#deliver!" do
-    it "sends a JSON message with templateName, fromAddress, and destinations" do
+    it "sends a JSON message with templateName, fromAddress, subject, and destinations" do
       mail = template_mail(
         template_name: "welcome-v1",
+        subject: "Welcome!",
         destinations: [
           { to: "a@example.com", data: { first_name: "Ada" } },
           { to: "b@example.com", data: { first_name: "Babbage" } }
@@ -55,6 +57,7 @@ RSpec.describe Fullsend::Delivery do
         body = JSON.parse(args[:message_body])
         expect(body["templateName"]).to eq("welcome-v1")
         expect(body["fromAddress"]).to eq(["App <noreply@example.com>"])
+        expect(body["subject"]).to eq("Welcome!")
         expect(body["destinations"]).to eq([
           { "to" => "a@example.com", "data" => { "first_name" => "Ada" } },
           { "to" => "b@example.com", "data" => { "first_name" => "Babbage" } }
@@ -62,7 +65,7 @@ RSpec.describe Fullsend::Delivery do
       end
     end
 
-    it "omits body/toAddresses/ccAddresses/bccAddresses/subject/templateData on the templated path" do
+    it "omits body/toAddresses/ccAddresses/bccAddresses/templateData on the templated path" do
       mail = template_mail
       mail.header["X-SES-API"] = { campaign_id: "welcome" }.to_json
 
@@ -71,7 +74,7 @@ RSpec.describe Fullsend::Delivery do
 
       expect(sqs_client).to have_received(:send_message) do |args|
         body = JSON.parse(args[:message_body])
-        %w[body toAddresses ccAddresses bccAddresses subject templateData].each do |key|
+        %w[body toAddresses ccAddresses bccAddresses templateData].each do |key|
           expect(body).not_to have_key(key), "expected payload not to include #{key.inspect}"
         end
       end

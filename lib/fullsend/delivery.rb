@@ -74,7 +74,7 @@ module Fullsend
     def build_message(mail)
       message =
         if mail.header["X-Fullsend-Template"].present?
-          { fromAddress: mail["from"]&.formatted }
+          { fromAddress: mail["from"]&.formatted, subject: mail.subject }
         else
           {
             body: mail.body.raw_source,

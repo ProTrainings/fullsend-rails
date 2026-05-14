@@ -97,7 +97,7 @@ class CampaignMailer < ApplicationMailer
     end
 
     set_template("welcome-v1", destinations: destinations)
-    mail(from: "App <noreply@example.com>")
+    mail(from: "App <noreply@example.com>", subject: "Welcome!")
   end
 end
 ```
@@ -108,6 +108,7 @@ The gem emits an SQS message of the form:
 {
   "templateName": "welcome-v1",
   "fromAddress": ["App <noreply@example.com>"],
+  "subject": "Welcome!",
   "destinations": [
     { "to": "user@example.com", "data": { "first_name": "Ada" } }
   ],
@@ -116,8 +117,8 @@ The gem emits an SQS message of the form:
 ```
 
 `destinations` is authoritative: per-recipient `to` addresses and Mustache
-`data` live there. Do not set `to`, `cc`, `bcc`, `subject`, or a body on the
-`Mail` object — those fields are no longer included in the payload.
+`data` live there. Do not set `to`, `cc`, `bcc`, or a body on the `Mail`
+object — those fields are not included in the payload.
 
 ## License
 
