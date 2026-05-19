@@ -1,7 +1,8 @@
 module Fullsend
   class Configuration
     attr_accessor :queue_name, :fullsend_app_id, :message_group_id,
-                  :attachments_bucket, :attachments_key_prefix
+                  :attachments_bucket, :attachments_key_prefix,
+                  :attachments_region
 
     def initialize
       @queue_name              = ENV["SQS_EMAIL_QUEUE_NAME"]
@@ -9,6 +10,7 @@ module Fullsend
       @message_group_id        = nil
       @attachments_bucket      = ENV["FULLSEND_ATTACHMENTS_BUCKET"]
       @attachments_key_prefix  = ""
+      @attachments_region      = ENV["FULLSEND_ATTACHMENTS_REGION"]
     end
 
     def validate!
@@ -41,6 +43,16 @@ module Fullsend
         options[:region] = rails_creds[:region]
       end
 
+      options
+    end
+
+    # Returns options to pass to Aws::S3::Client.new. Identical to
+    # aws_client_options except that :region is overridden by
+    # attachments_region when set — useful when the S3 attachments bucket
+    # lives in a different region than the SQS queue.
+    def s3_client_options
+      options = aws_client_options
+      options = options.merge(region: attachments_region) if attachments_region && !attachments_region.empty?
       options
     end
 

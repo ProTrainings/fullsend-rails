@@ -5,6 +5,7 @@ RSpec.describe Fullsend::Configuration do
     it "reads queue_name from ENV" do
       allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return("MyQueue.fifo")
       allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
+      allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_REGION").and_return(nil)
       config = described_class.new
       expect(config.queue_name).to eq("MyQueue.fifo")
     end
@@ -12,6 +13,7 @@ RSpec.describe Fullsend::Configuration do
     it "defaults queue_name to nil when ENV not set" do
       allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
       allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
+      allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_REGION").and_return(nil)
       config = described_class.new
       expect(config.queue_name).to be_nil
     end
@@ -29,13 +31,31 @@ RSpec.describe Fullsend::Configuration do
     it "reads attachments_bucket from ENV" do
       allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
       allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return("my-bucket")
+      allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_REGION").and_return(nil)
       config = described_class.new
       expect(config.attachments_bucket).to eq("my-bucket")
+    end
+
+    it "reads attachments_region from ENV" do
+      allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
+      allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
+      allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_REGION").and_return("us-west-2")
+      config = described_class.new
+      expect(config.attachments_region).to eq("us-west-2")
+    end
+
+    it "defaults attachments_region to nil when ENV not set" do
+      allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
+      allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
+      allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_REGION").and_return(nil)
+      config = described_class.new
+      expect(config.attachments_region).to be_nil
     end
 
     it "defaults attachments_bucket to nil when ENV not set" do
       allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
       allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
+      allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_REGION").and_return(nil)
       config = described_class.new
       expect(config.attachments_bucket).to be_nil
     end
@@ -72,6 +92,7 @@ RSpec.describe Fullsend::Configuration do
       before do
         allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
         allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
+        allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_REGION").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_ACCESS_KEY_ID").and_return("env-key")
         allow(ENV).to receive(:[]).with("AWS_SECRET_ACCESS_KEY").and_return("env-secret")
         allow(ENV).to receive(:[]).with("AWS_REGION").and_return("us-east-1")
@@ -92,6 +113,7 @@ RSpec.describe Fullsend::Configuration do
       before do
         allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
         allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
+        allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_REGION").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_ACCESS_KEY_ID").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_SECRET_ACCESS_KEY").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_REGION").and_return(nil)
@@ -121,6 +143,7 @@ RSpec.describe Fullsend::Configuration do
       before do
         allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
         allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
+        allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_REGION").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_ACCESS_KEY_ID").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_SECRET_ACCESS_KEY").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_REGION").and_return(nil)
@@ -150,6 +173,7 @@ RSpec.describe Fullsend::Configuration do
       before do
         allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
         allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
+        allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_REGION").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_ACCESS_KEY_ID").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_SECRET_ACCESS_KEY").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_REGION").and_return(nil)
@@ -160,6 +184,44 @@ RSpec.describe Fullsend::Configuration do
         config = described_class.new
         expect(config.aws_client_options).to eq({})
       end
+    end
+  end
+
+  describe "#s3_client_options" do
+    before do
+      allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
+      allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
+      allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_REGION").and_return(nil)
+      allow(ENV).to receive(:[]).with("AWS_ACCESS_KEY_ID").and_return("k")
+      allow(ENV).to receive(:[]).with("AWS_SECRET_ACCESS_KEY").and_return("s")
+      allow(ENV).to receive(:[]).with("AWS_REGION").and_return("us-east-1")
+    end
+
+    it "returns aws_client_options unchanged when attachments_region is not set" do
+      require "aws-sdk-sqs"
+      config = described_class.new
+      expect(config.s3_client_options[:region]).to eq("us-east-1")
+    end
+
+    it "overrides region when attachments_region is set" do
+      require "aws-sdk-sqs"
+      config = described_class.new
+      config.attachments_region = "us-west-2"
+      expect(config.s3_client_options[:region]).to eq("us-west-2")
+    end
+
+    it "ignores an empty attachments_region" do
+      require "aws-sdk-sqs"
+      config = described_class.new
+      config.attachments_region = ""
+      expect(config.s3_client_options[:region]).to eq("us-east-1")
+    end
+
+    it "preserves credentials from aws_client_options" do
+      require "aws-sdk-sqs"
+      config = described_class.new
+      config.attachments_region = "us-west-2"
+      expect(config.s3_client_options[:credentials]).to be_a(Aws::Credentials)
     end
   end
 end

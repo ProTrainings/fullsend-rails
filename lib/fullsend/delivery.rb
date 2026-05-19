@@ -30,7 +30,7 @@ module Fullsend
 
       def s3_client
         @mutex.synchronize do
-          @s3_client ||= Aws::S3::Client.new(Fullsend.configuration.aws_client_options)
+          @s3_client ||= Aws::S3::Client.new(Fullsend.configuration.s3_client_options)
         end
       end
 

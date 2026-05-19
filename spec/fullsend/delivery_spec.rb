@@ -391,6 +391,19 @@ RSpec.describe Fullsend::Delivery do
           expect(args[:key]).to match(/\A[0-9a-f-]{36}-doc\.pdf\z/)
         end
       end
+
+      it "builds the S3 client with attachments_region when set, overriding the SQS region" do
+        Fullsend.configuration.attachments_region = "us-west-2"
+        described_class.reset!
+
+        mail = mail_with_attachment
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(Aws::S3::Client).to have_received(:new).with(hash_including(region: "us-west-2"))
+        expect(Aws::SQS::Client).to have_received(:new).with(hash_including(region: "us-east-1"))
+      end
     end
   end
 end

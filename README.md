@@ -137,6 +137,12 @@ Configure a bucket the downstream service can read from:
 Fullsend.configure do |config|
   config.attachments_bucket     = "my-fullsend-bucket"
   config.attachments_key_prefix = "outgoing/" # optional
+
+  # Optional: override the region for the S3 client only. Useful when the
+  # attachments bucket lives in a different region than the SQS queue.
+  # Defaults from FULLSEND_ATTACHMENTS_REGION. SQS continues to use the
+  # region resolved by aws_client_options.
+  config.attachments_region     = "us-west-2"
 end
 ```
 
