@@ -1,3 +1,4 @@
+require "aws-sdk-s3"
 require "aws-sdk-sqs"
 require "json"
 require "securerandom"
@@ -9,12 +10,14 @@ module Fullsend
 
     @mutex = Mutex.new
     @sqs_client = nil
+    @s3_client = nil
     @queue_url = nil
 
     class << self
       def reset!
         @mutex.synchronize do
           @sqs_client = nil
+          @s3_client = nil
           @queue_url = nil
         end
       end
@@ -22,6 +25,12 @@ module Fullsend
       def sqs_client
         @mutex.synchronize do
           @sqs_client ||= Aws::SQS::Client.new(Fullsend.configuration.aws_client_options)
+        end
+      end
+
+      def s3_client
+        @mutex.synchronize do
+          @s3_client ||= Aws::S3::Client.new(Fullsend.configuration.aws_client_options)
         end
       end
 
@@ -46,7 +55,8 @@ module Fullsend
       config = Fullsend.configuration
       config.validate!
 
-      message = build_message(mail)
+      attachment_keys = upload_attachments(mail)
+      message = build_message(mail, attachment_keys)
       message_json = message.to_json
       message_size = message_json.bytesize
 
@@ -71,7 +81,7 @@ module Fullsend
 
     private
 
-    def build_message(mail)
+    def build_message(mail, attachment_keys)
       message =
         if mail.header["X-Fullsend-Template"].present?
           { fromAddress: mail["from"]&.formatted, subject: mail.subject }
@@ -88,7 +98,35 @@ module Fullsend
 
       extract_template(mail, message)
       extract_ses_tags(mail, message)
+      message[:attachments] = attachment_keys if attachment_keys.any?
       message
+    end
+
+    def upload_attachments(mail)
+      attachments = mail.attachments
+      return [] if attachments.nil? || attachments.empty?
+
+      config = Fullsend.configuration
+      bucket = config.attachments_bucket
+      if bucket.nil? || bucket.empty?
+        raise ConfigurationError,
+          "attachments_bucket is required to send attachments. Set it via Fullsend.configure."
+      end
+
+      prefix = config.attachments_key_prefix.to_s
+      client = self.class.s3_client
+
+      attachments.map do |attachment|
+        filename = File.basename(attachment.filename.to_s)
+        key = "#{prefix}#{SecureRandom.uuid}-#{filename}"
+        client.put_object(
+          bucket: bucket,
+          key: key,
+          body: attachment.body.decoded,
+          content_type: attachment.mime_type
+        )
+        key
+      end
     end
 
     def extract_template(mail, message)

@@ -1,11 +1,14 @@
 module Fullsend
   class Configuration
-    attr_accessor :queue_name, :fullsend_app_id, :message_group_id
+    attr_accessor :queue_name, :fullsend_app_id, :message_group_id,
+                  :attachments_bucket, :attachments_key_prefix
 
     def initialize
-      @queue_name        = ENV["SQS_EMAIL_QUEUE_NAME"]
-      @fullsend_app_id   = nil
-      @message_group_id  = nil
+      @queue_name              = ENV["SQS_EMAIL_QUEUE_NAME"]
+      @fullsend_app_id         = nil
+      @message_group_id        = nil
+      @attachments_bucket      = ENV["FULLSEND_ATTACHMENTS_BUCKET"]
+      @attachments_key_prefix  = ""
     end
 
     def validate!

@@ -4,6 +4,7 @@ require "json"
 
 RSpec.describe Fullsend::Delivery do
   let(:sqs_client) { instance_double(Aws::SQS::Client) }
+  let(:s3_client) { instance_double(Aws::S3::Client) }
   let(:queue_url_response) { double("response", queue_url: "https://sqs.us-east-1.amazonaws.com/123456789012/test-queue.fifo") }
 
   around do |example|
@@ -25,6 +26,9 @@ RSpec.describe Fullsend::Delivery do
     allow(Aws::SQS::Client).to receive(:new).and_return(sqs_client)
     allow(sqs_client).to receive(:get_queue_url).and_return(queue_url_response)
     allow(sqs_client).to receive(:send_message)
+
+    allow(Aws::S3::Client).to receive(:new).and_return(s3_client)
+    allow(s3_client).to receive(:put_object)
 
     # Reset cached client between tests
     described_class.reset!
@@ -243,6 +247,149 @@ RSpec.describe Fullsend::Delivery do
         body = JSON.parse(args[:message_body])
         expect(body).not_to have_key("templateName")
         expect(body).not_to have_key("destinations")
+      end
+    end
+
+    context "with attachments" do
+      before do
+        Fullsend.configure do |c|
+          c.attachments_bucket = "fullsend-attachments"
+          c.attachments_key_prefix = "outgoing/"
+        end
+      end
+
+      def mail_with_attachment(filename: "receipt.pdf", content: "%PDF-1.4 binary bytes", template: false)
+        mail = Mail.new do
+          from "App <noreply@example.com>"
+          to   "user@example.com"
+        end
+        mail.subject = "Your receipt"
+        mail.body = "Thanks!" unless template
+        mail.attachments[filename] = content
+        if template
+          mail.header["X-Fullsend-Template"] = { name: "receipt-v1", destinations: [{ to: "user@example.com" }] }.to_json
+        end
+        mail
+      end
+
+      it "uploads each attachment to S3 with prefix/<uuid>-<filename> key" do
+        mail = mail_with_attachment
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(s3_client).to have_received(:put_object).once do |args|
+          expect(args[:bucket]).to eq("fullsend-attachments")
+          expect(args[:key]).to match(%r{\Aoutgoing/[0-9a-f-]{36}-receipt\.pdf\z})
+          expect(args[:body]).to include("%PDF-1.4")
+          expect(args[:content_type]).to eq("application/pdf")
+        end
+      end
+
+      it "includes the S3 keys in the SQS message's attachments array" do
+        mail = Mail.new do
+          from "a@b.com"
+          to   "c@d.com"
+          subject "Test"
+          body "body"
+        end
+        mail.attachments["a.pdf"] = "PDF A"
+        mail.attachments["b.csv"] = "col1,col2\n1,2"
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(sqs_client).to have_received(:send_message) do |args|
+          body = JSON.parse(args[:message_body])
+          expect(body["attachments"].length).to eq(2)
+          expect(body["attachments"][0]).to match(%r{\Aoutgoing/[0-9a-f-]{36}-a\.pdf\z})
+          expect(body["attachments"][1]).to match(%r{\Aoutgoing/[0-9a-f-]{36}-b\.csv\z})
+        end
+      end
+
+      it "omits attachments key from the SQS message when there are none" do
+        mail = Mail.new do
+          from "a@b.com"
+          to   "c@d.com"
+          subject "Test"
+          body "body"
+        end
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(s3_client).not_to have_received(:put_object)
+        expect(sqs_client).to have_received(:send_message) do |args|
+          body = JSON.parse(args[:message_body])
+          expect(body).not_to have_key("attachments")
+        end
+      end
+
+      it "includes attachments on the templated path too" do
+        mail = mail_with_attachment(template: true)
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(s3_client).to have_received(:put_object).once
+        expect(sqs_client).to have_received(:send_message) do |args|
+          body = JSON.parse(args[:message_body])
+          expect(body["templateName"]).to eq("receipt-v1")
+          expect(body["attachments"].length).to eq(1)
+          expect(body["attachments"][0]).to match(/receipt\.pdf\z/)
+        end
+      end
+
+      it "raises ConfigurationError when attachments are present but bucket is not configured" do
+        Fullsend.configuration.attachments_bucket = nil
+        described_class.reset!
+
+        mail = mail_with_attachment
+
+        delivery = described_class.new({})
+        expect { delivery.deliver!(mail) }.to raise_error(Fullsend::ConfigurationError, /attachments_bucket/)
+        expect(sqs_client).not_to have_received(:send_message)
+      end
+
+      it "does not enqueue an SQS message when an S3 PUT fails" do
+        allow(s3_client).to receive(:put_object).and_raise(Aws::S3::Errors::ServiceError.new(nil, "boom"))
+
+        mail = mail_with_attachment
+
+        delivery = described_class.new({})
+        expect { delivery.deliver!(mail) }.to raise_error(Aws::S3::Errors::ServiceError)
+        expect(sqs_client).not_to have_received(:send_message)
+      end
+
+      it "strips any path components from the attachment filename" do
+        mail = Mail.new do
+          from "a@b.com"
+          to   "c@d.com"
+          subject "Test"
+          body "body"
+        end
+        mail.attachments["../../etc/passwd.txt"] = "secret"
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(s3_client).to have_received(:put_object) do |args|
+          expect(args[:key]).to match(%r{\Aoutgoing/[0-9a-f-]{36}-passwd\.txt\z})
+        end
+      end
+
+      it "works without a configured prefix" do
+        Fullsend.configuration.attachments_key_prefix = ""
+        described_class.reset!
+
+        mail = mail_with_attachment(filename: "doc.pdf")
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(s3_client).to have_received(:put_object) do |args|
+          expect(args[:key]).to match(/\A[0-9a-f-]{36}-doc\.pdf\z/)
+        end
       end
     end
   end

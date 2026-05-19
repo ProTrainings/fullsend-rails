@@ -4,12 +4,14 @@ RSpec.describe Fullsend::Configuration do
   describe "#initialize" do
     it "reads queue_name from ENV" do
       allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return("MyQueue.fifo")
+      allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
       config = described_class.new
       expect(config.queue_name).to eq("MyQueue.fifo")
     end
 
     it "defaults queue_name to nil when ENV not set" do
       allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
+      allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
       config = described_class.new
       expect(config.queue_name).to be_nil
     end
@@ -22,6 +24,25 @@ RSpec.describe Fullsend::Configuration do
     it "has nil message_group_id by default" do
       config = described_class.new
       expect(config.message_group_id).to be_nil
+    end
+
+    it "reads attachments_bucket from ENV" do
+      allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
+      allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return("my-bucket")
+      config = described_class.new
+      expect(config.attachments_bucket).to eq("my-bucket")
+    end
+
+    it "defaults attachments_bucket to nil when ENV not set" do
+      allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
+      allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
+      config = described_class.new
+      expect(config.attachments_bucket).to be_nil
+    end
+
+    it "defaults attachments_key_prefix to an empty string" do
+      config = described_class.new
+      expect(config.attachments_key_prefix).to eq("")
     end
   end
 
@@ -50,6 +71,7 @@ RSpec.describe Fullsend::Configuration do
     context "when ENV vars are set" do
       before do
         allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
+        allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_ACCESS_KEY_ID").and_return("env-key")
         allow(ENV).to receive(:[]).with("AWS_SECRET_ACCESS_KEY").and_return("env-secret")
         allow(ENV).to receive(:[]).with("AWS_REGION").and_return("us-east-1")
@@ -69,6 +91,7 @@ RSpec.describe Fullsend::Configuration do
     context "when ENV vars are not set and Rails credentials exist" do
       before do
         allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
+        allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_ACCESS_KEY_ID").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_SECRET_ACCESS_KEY").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_REGION").and_return(nil)
@@ -97,6 +120,7 @@ RSpec.describe Fullsend::Configuration do
     context "when Rails credentials use access_key/secret_key keys" do
       before do
         allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
+        allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_ACCESS_KEY_ID").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_SECRET_ACCESS_KEY").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_REGION").and_return(nil)
@@ -125,6 +149,7 @@ RSpec.describe Fullsend::Configuration do
     context "when neither source provides credentials" do
       before do
         allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
+        allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_ACCESS_KEY_ID").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_SECRET_ACCESS_KEY").and_return(nil)
         allow(ENV).to receive(:[]).with("AWS_REGION").and_return(nil)
