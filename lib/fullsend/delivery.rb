@@ -107,13 +107,13 @@ module Fullsend
       return [] if attachments.nil? || attachments.empty?
 
       config = Fullsend.configuration
-      bucket = config.attachments_bucket
+      bucket = config.s3_bucket
       if bucket.nil? || bucket.empty?
         raise ConfigurationError,
-          "attachments_bucket is required to send attachments. Set it via Fullsend.configure."
+          "s3_bucket is required to send attachments. Set it via Fullsend.configure."
       end
 
-      prefix = config.attachments_key_prefix.to_s
+      prefix = config.s3_key_prefix.to_s
       client = self.class.s3_client
 
       attachments.map do |attachment|

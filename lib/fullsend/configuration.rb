@@ -1,16 +1,20 @@
 module Fullsend
   class Configuration
     attr_accessor :queue_name, :fullsend_app_id, :message_group_id,
-                  :attachments_bucket, :attachments_key_prefix,
-                  :attachments_region
+                  :s3_bucket, :s3_key_prefix,
+                  :s3_region,
+                  :access_key_id, :secret_access_key, :region
 
     def initialize
       @queue_name              = ENV["SQS_EMAIL_QUEUE_NAME"]
       @fullsend_app_id         = nil
       @message_group_id        = nil
-      @attachments_bucket      = ENV["FULLSEND_ATTACHMENTS_BUCKET"]
-      @attachments_key_prefix  = ""
-      @attachments_region      = ENV["FULLSEND_ATTACHMENTS_REGION"]
+      @s3_bucket      = ENV["AWS_S3_BUCKET_NAME"]
+      @s3_key_prefix  = ""
+      @s3_region      = ENV["AWS_S3_REGION"]
+      @access_key_id           = nil
+      @secret_access_key       = nil
+      @region                  = nil
     end
 
     def validate!
@@ -23,12 +27,19 @@ module Fullsend
       end
     end
 
-    # Returns options to pass to Aws::SQS::Client.new. Explicit credentials
-    # are only included when found in env vars or Rails encrypted credentials;
-    # otherwise the SDK's default credential chain (Aws.config, instance
-    # profile, shared config, etc.) is used.
+    # Returns options to pass to Aws::SQS::Client.new. Resolution order:
+    # 1. Explicit values set on Fullsend.configure (access_key_id, secret_access_key, region)
+    # 2. AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION env vars
+    # 3. Rails encrypted credentials (Rails.application.credentials.aws)
+    # 4. SDK default credential chain (Aws.config, instance profile, shared config, etc.)
     def aws_client_options
       options = {}
+
+      if access_key_id && secret_access_key
+        options[:credentials] = Aws::Credentials.new(access_key_id, secret_access_key)
+        options[:region] = region if region
+        return options
+      end
 
       env_creds = aws_env_credentials
       rails_creds = aws_rails_credentials
@@ -43,16 +54,17 @@ module Fullsend
         options[:region] = rails_creds[:region]
       end
 
+      options[:region] ||= region if region
       options
     end
 
     # Returns options to pass to Aws::S3::Client.new. Identical to
     # aws_client_options except that :region is overridden by
-    # attachments_region when set — useful when the S3 attachments bucket
+    # s3_region when set — useful when the S3 attachments bucket
     # lives in a different region than the SQS queue.
     def s3_client_options
       options = aws_client_options
-      options = options.merge(region: attachments_region) if attachments_region && !attachments_region.empty?
+      options = options.merge(region: s3_region) if s3_region && !s3_region.empty?
       options
     end
 

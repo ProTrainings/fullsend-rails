@@ -23,9 +23,9 @@ Fullsend.configure do |config|
   config.fullsend_app_id         = ENV.fetch("FULLSEND_APP_ID", "MyApp")
   config.message_group_id        = ENV.fetch("FULLSEND_MESSAGE_GROUP", "my-app-emailer")
 
-  # Required only if you send attachments. Defaults from FULLSEND_ATTACHMENTS_BUCKET.
-  config.attachments_bucket      = ENV.fetch("FULLSEND_ATTACHMENTS_BUCKET", nil)
-  config.attachments_key_prefix  = "outgoing/" # optional, default ""
+  # Required only if you send attachments. Defaults from AWS_S3_BUCKET_NAME.
+  config.s3_bucket      = ENV.fetch("AWS_S3_BUCKET_NAME", nil)
+  config.s3_key_prefix  = "outgoing/" # optional, default ""
 end
 ```
 
@@ -135,14 +135,14 @@ Configure a bucket the downstream service can read from:
 
 ```ruby
 Fullsend.configure do |config|
-  config.attachments_bucket     = "my-fullsend-bucket"
-  config.attachments_key_prefix = "outgoing/" # optional
+  config.s3_bucket     = "my-fullsend-bucket"
+  config.s3_key_prefix = "outgoing/" # optional
 
   # Optional: override the region for the S3 client only. Useful when the
   # attachments bucket lives in a different region than the SQS queue.
-  # Defaults from FULLSEND_ATTACHMENTS_REGION. SQS continues to use the
+  # Defaults from AWS_S3_REGION. SQS continues to use the
   # region resolved by aws_client_options.
-  config.attachments_region     = "us-west-2"
+  config.s3_region     = "us-west-2"
 end
 ```
 
@@ -174,7 +174,7 @@ Notes:
 - Attachments work on both the standard and templated paths.
 - Keys are `<prefix><uuid>-<filename>`. The recipient sees the original
   filename (the segment after the UUID).
-- If `mail.attachments` is non-empty but `attachments_bucket` is unset,
+- If `mail.attachments` is non-empty but `s3_bucket` is unset,
   `Fullsend::ConfigurationError` is raised before any SQS enqueue.
 - An S3 PUT failure aborts before SQS is touched (no orphaned messages
   referencing missing keys); orphaned S3 objects from a later SQS failure

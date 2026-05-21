@@ -253,8 +253,8 @@ RSpec.describe Fullsend::Delivery do
     context "with attachments" do
       before do
         Fullsend.configure do |c|
-          c.attachments_bucket = "fullsend-attachments"
-          c.attachments_key_prefix = "outgoing/"
+          c.s3_bucket = "fullsend-attachments"
+          c.s3_key_prefix = "outgoing/"
         end
       end
 
@@ -341,13 +341,13 @@ RSpec.describe Fullsend::Delivery do
       end
 
       it "raises ConfigurationError when attachments are present but bucket is not configured" do
-        Fullsend.configuration.attachments_bucket = nil
+        Fullsend.configuration.s3_bucket = nil
         described_class.reset!
 
         mail = mail_with_attachment
 
         delivery = described_class.new({})
-        expect { delivery.deliver!(mail) }.to raise_error(Fullsend::ConfigurationError, /attachments_bucket/)
+        expect { delivery.deliver!(mail) }.to raise_error(Fullsend::ConfigurationError, /s3_bucket/)
         expect(sqs_client).not_to have_received(:send_message)
       end
 
@@ -379,7 +379,7 @@ RSpec.describe Fullsend::Delivery do
       end
 
       it "works without a configured prefix" do
-        Fullsend.configuration.attachments_key_prefix = ""
+        Fullsend.configuration.s3_key_prefix = ""
         described_class.reset!
 
         mail = mail_with_attachment(filename: "doc.pdf")
@@ -392,8 +392,8 @@ RSpec.describe Fullsend::Delivery do
         end
       end
 
-      it "builds the S3 client with attachments_region when set, overriding the SQS region" do
-        Fullsend.configuration.attachments_region = "us-west-2"
+      it "builds the S3 client with s3_region when set, overriding the SQS region" do
+        Fullsend.configuration.s3_region = "us-west-2"
         described_class.reset!
 
         mail = mail_with_attachment
