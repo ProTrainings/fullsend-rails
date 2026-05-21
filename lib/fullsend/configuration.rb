@@ -38,6 +38,7 @@ module Fullsend
       if access_key_id && secret_access_key
         options[:credentials] = Aws::Credentials.new(access_key_id, secret_access_key)
         options[:region] = region if region
+        options[:region] ||= s3_region if s3_region && !s3_region.to_s.empty?
         return options
       end
 
@@ -55,6 +56,7 @@ module Fullsend
       end
 
       options[:region] ||= region if region
+      options[:region] ||= s3_region if s3_region && !s3_region.to_s.empty?
       options
     end
 

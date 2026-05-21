@@ -185,6 +185,43 @@ RSpec.describe Fullsend::Configuration do
         expect(config.aws_client_options).to eq({})
       end
     end
+
+    context "when explicit credentials are set but only s3_region is configured" do
+      before do
+        allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
+        allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return(nil)
+        allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_REGION").and_return(nil)
+        allow(ENV).to receive(:[]).with("AWS_S3_BUCKET_NAME").and_return(nil)
+        allow(ENV).to receive(:[]).with("AWS_S3_REGION").and_return(nil)
+        allow(ENV).to receive(:[]).with("AWS_ACCESS_KEY_ID").and_return(nil)
+        allow(ENV).to receive(:[]).with("AWS_SECRET_ACCESS_KEY").and_return(nil)
+        allow(ENV).to receive(:[]).with("AWS_REGION").and_return(nil)
+      end
+
+      it "uses s3_region as the SQS region fallback" do
+        require "aws-sdk-sqs"
+        hide_const("Rails")
+        config = described_class.new
+        config.access_key_id = "explicit-key"
+        config.secret_access_key = "explicit-secret"
+        config.s3_region = "us-east-2"
+        opts = config.aws_client_options
+        expect(opts[:credentials].access_key_id).to eq("explicit-key")
+        expect(opts[:region]).to eq("us-east-2")
+      end
+
+      it "prefers explicit region over s3_region" do
+        require "aws-sdk-sqs"
+        hide_const("Rails")
+        config = described_class.new
+        config.access_key_id = "explicit-key"
+        config.secret_access_key = "explicit-secret"
+        config.region = "us-west-1"
+        config.s3_region = "us-east-2"
+        opts = config.aws_client_options
+        expect(opts[:region]).to eq("us-west-1")
+      end
+    end
   end
 
   describe "#s3_client_options" do
