@@ -73,6 +73,31 @@ end
 set_ses_headers(campaign_id: "custom_campaign", tags: ["promo"])
 ```
 
+### Transactional vs marketing
+
+The downstream service treats every email as **marketing by default** (and now
+classifies anything tagged `"transactional"` as marketing too, as a safety
+measure). To opt an email into the transactional path — bypassing unsubscribe
+suppression and marketing throttles — set a `category: "transactional"` entry
+via `metadata`:
+
+```ruby
+set_ses_headers(metadata: { category: "transactional" })
+```
+
+That produces an `emailTags` entry the downstream service recognizes:
+
+```json
+{
+  "emailTags": [
+    { "Name": "category", "Value": "transactional" }
+  ]
+}
+```
+
+Only use this for true transactional mail (password resets, receipts, account
+notifications). Anything promotional should stay on the default marketing path.
+
 ## Non-Templated Emails
 
 Standard `ActionMailer` usage works as you'd expect — `to`, `cc`, `bcc`,
