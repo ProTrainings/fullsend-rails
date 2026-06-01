@@ -98,6 +98,25 @@ That produces an `emailTags` entry the downstream service recognizes:
 Only use this for true transactional mail (password resets, receipts, account
 notifications). Anything promotional should stay on the default marketing path.
 
+### Migrating from another provider's header
+
+If you're moving an existing app off another email provider, its mailers may
+already emit a provider-specific header carrying the same tag JSON (for
+example SparkPost's `X-MSYS-API`). Rather than rewriting every mailer to call
+`set_ses_headers`, list those headers in `legacy_tag_headers`. The gem reads
+the first one present as a fallback when `X-SES-API` is absent:
+
+```ruby
+Fullsend.configure do |config|
+  config.legacy_tag_headers = ["X-MSYS-API"]
+end
+```
+
+`X-SES-API` always takes precedence when both are present, and the option is
+empty by default — the gem knows nothing about any specific provider unless
+you opt in. The header value must be the same JSON shape `set_ses_headers`
+produces (`{ "campaign_id": ..., "tags": [...], "metadata": {...} }`).
+
 ## Non-Templated Emails
 
 Standard `ActionMailer` usage works as you'd expect — `to`, `cc`, `bcc`,

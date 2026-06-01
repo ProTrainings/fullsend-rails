@@ -193,6 +193,73 @@ RSpec.describe Fullsend::Delivery do
       end
     end
 
+    context "with legacy_tag_headers configured" do
+      before do
+        Fullsend.configuration.legacy_tag_headers = ["X-MSYS-API"]
+      end
+
+      it "extracts a legacy header into emailTags when X-SES-API is absent" do
+        mail = template_mail
+        mail.header["X-MSYS-API"] = {
+          campaign_id: "welcome",
+          tags: ["onboarding"],
+          metadata: { user_id: "42" }
+        }.to_json
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(sqs_client).to have_received(:send_message) do |args|
+          body = JSON.parse(args[:message_body])
+          tags = body["emailTags"]
+          expect(tags).to include({ "Name" => "campaign_id", "Value" => "welcome" })
+          expect(tags).to include({ "Name" => "tag", "Value" => "onboarding" })
+          expect(tags).to include({ "Name" => "user_id", "Value" => "42" })
+        end
+      end
+
+      it "prefers X-SES-API over the legacy header when both are present" do
+        mail = template_mail
+        mail.header["X-SES-API"] = { campaign_id: "ses-wins" }.to_json
+        mail.header["X-MSYS-API"] = { campaign_id: "msys-loses" }.to_json
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(sqs_client).to have_received(:send_message) do |args|
+          body = JSON.parse(args[:message_body])
+          expect(body["emailTags"]).to include({ "Name" => "campaign_id", "Value" => "ses-wins" })
+          expect(body["emailTags"]).not_to include({ "Name" => "campaign_id", "Value" => "msys-loses" })
+        end
+      end
+
+      it "ignores legacy headers that are not configured" do
+        mail = template_mail
+        mail.header["X-OTHER-API"] = { campaign_id: "ignored" }.to_json
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(sqs_client).to have_received(:send_message) do |args|
+          body = JSON.parse(args[:message_body])
+          expect(body).not_to have_key("emailTags")
+        end
+      end
+    end
+
+    it "ignores a legacy header when legacy_tag_headers is unset (default)" do
+      mail = template_mail
+      mail.header["X-MSYS-API"] = { campaign_id: "welcome" }.to_json
+
+      delivery = described_class.new({})
+      delivery.deliver!(mail)
+
+      expect(sqs_client).to have_received(:send_message) do |args|
+        body = JSON.parse(args[:message_body])
+        expect(body).not_to have_key("emailTags")
+      end
+    end
+
     it "gracefully handles malformed X-SES-API header" do
       mail = template_mail
       mail.header["X-SES-API"] = "not-valid-json{"
