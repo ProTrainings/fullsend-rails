@@ -3,7 +3,8 @@ module Fullsend
     attr_accessor :queue_name, :fullsend_app_id, :message_group_id,
                   :s3_bucket, :s3_key_prefix,
                   :s3_region,
-                  :access_key_id, :secret_access_key, :region
+                  :access_key_id, :secret_access_key, :region,
+                  :legacy_tag_headers
 
     def initialize
       @queue_name              = ENV["SQS_EMAIL_QUEUE_NAME"]
@@ -15,6 +16,12 @@ module Fullsend
       @access_key_id           = nil
       @secret_access_key       = nil
       @region                  = nil
+      # Extra header names whose value carries SES-tag-shaped JSON
+      # (tags/campaign_id/metadata), read as a fallback when X-SES-API
+      # is absent. Lets an app migrating off another provider keep
+      # emitting its legacy header (e.g. "X-MSYS-API") without rewriting
+      # every mailer. Empty by default — the gem stays provider-agnostic.
+      @legacy_tag_headers      = []
     end
 
     def validate!

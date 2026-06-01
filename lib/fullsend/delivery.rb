@@ -140,9 +140,10 @@ module Fullsend
     end
 
     def extract_ses_tags(mail, message)
-      return unless mail.header["X-SES-API"].present?
+      header = ses_tags_header(mail)
+      return unless header
 
-      ses_data = JSON.parse(mail.header["X-SES-API"].value)
+      ses_data = JSON.parse(header.value)
       email_tags = []
 
       if ses_data["campaign_id"]
@@ -163,7 +164,18 @@ module Fullsend
 
       message[:emailTags] = email_tags unless email_tags.empty?
     rescue JSON::ParserError
-      warn "[Fullsend] Failed to parse X-SES-API header: #{mail.header["X-SES-API"].value}"
+      warn "[Fullsend] Failed to parse #{header.name} header: #{header.value}"
+    end
+
+    # Returns the header carrying SES-tag JSON: X-SES-API if present,
+    # otherwise the first configured legacy_tag_headers entry that is set.
+    def ses_tags_header(mail)
+      return mail.header["X-SES-API"] if mail.header["X-SES-API"].present?
+
+      Array(Fullsend.configuration.legacy_tag_headers)
+        .lazy
+        .map { |name| mail.header[name] }
+        .detect(&:present?)
     end
   end
 end

@@ -28,6 +28,11 @@ RSpec.describe Fullsend::Configuration do
       expect(config.message_group_id).to be_nil
     end
 
+    it "has an empty legacy_tag_headers by default" do
+      config = described_class.new
+      expect(config.legacy_tag_headers).to eq([])
+    end
+
     it "reads s3_bucket from ENV" do
       allow(ENV).to receive(:[]).with("SQS_EMAIL_QUEUE_NAME").and_return(nil)
       allow(ENV).to receive(:[]).with("FULLSEND_ATTACHMENTS_BUCKET").and_return("my-bucket")
