@@ -24,7 +24,7 @@ module Fullsend
 
       def sqs_client
         @mutex.synchronize do
-          @sqs_client ||= Aws::SQS::Client.new(Fullsend.configuration.aws_client_options)
+          @sqs_client ||= Aws::SQS::Client.new(Fullsend.configuration.sqs_client_options)
         end
       end
 
@@ -98,6 +98,10 @@ module Fullsend
 
       extract_template(mail, message)
       extract_ses_tags(mail, message)
+
+      ses_region = Fullsend.configuration.ses_region
+      message[:sesRegion] = ses_region if ses_region && !ses_region.to_s.empty?
+
       message[:attachments] = attachment_keys if attachment_keys.any?
       message
     end

@@ -84,6 +84,45 @@ RSpec.describe Fullsend::Delivery do
       end
     end
 
+    context "with ses_region configured" do
+      it "includes sesRegion in the payload" do
+        Fullsend.configuration.ses_region = "eu-west-1"
+        mail = Mail.new do
+          from    "a@b.com"
+          to      "c@d.com"
+          subject "Test"
+          body    "body"
+        end
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(sqs_client).to have_received(:send_message) do |args|
+          body = JSON.parse(args[:message_body])
+          expect(body["sesRegion"]).to eq("eu-west-1")
+        end
+      ensure
+        Fullsend.configuration.ses_region = nil
+      end
+    end
+
+    it "omits sesRegion when ses_region is not configured" do
+      mail = Mail.new do
+        from    "a@b.com"
+        to      "c@d.com"
+        subject "Test"
+        body    "body"
+      end
+
+      delivery = described_class.new({})
+      delivery.deliver!(mail)
+
+      expect(sqs_client).to have_received(:send_message) do |args|
+        body = JSON.parse(args[:message_body])
+        expect(body).not_to have_key("sesRegion")
+      end
+    end
+
     context "when no template header is set (non-templated email)" do
       it "sends body/toAddresses/fromAddress/subject" do
         mail = Mail.new do
