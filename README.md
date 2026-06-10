@@ -40,8 +40,42 @@ config.action_mailer.delivery_method = :fullsend
 
 The gem looks for credentials in this order:
 
-1. Environment variables: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
-2. Rails encrypted credentials: `credentials.aws.access_key_id`, etc.
+1. Explicit values on `Fullsend.configure` (`access_key_id`, `secret_access_key`, `region`)
+2. Environment variables: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
+3. Rails encrypted credentials: `credentials.aws.access_key_id`, etc.
+4. The AWS SDK's default credential chain (instance profile, shared config, etc.)
+
+### Regions
+
+Each AWS service this gem touches can live in its own region. All three
+default from their own env var and fall back to the generic `region`
+(`AWS_REGION`) when unset:
+
+| Config | Env var | Used for |
+| --- | --- | --- |
+| `region` | `AWS_REGION` | Generic default + credential resolution |
+| `sqs_region` | `AWS_SQS_REGION` | The SQS client (queue) |
+| `s3_region` | `AWS_S3_REGION` | The S3 client (attachments bucket) |
+| `ses_region` | `AWS_SES_REGION` | Carried in the SQS payload as `sesRegion` for the downstream SES sender |
+
+```ruby
+Fullsend.configure do |config|
+  config.sqs_region = "us-east-1"  # queue lives here
+  config.s3_region  = "us-west-2"  # attachments bucket lives here
+  config.ses_region = "us-east-1"  # downstream service sends from here
+end
+```
+
+The SQS and S3 clients are built independently — setting `s3_region` never
+affects the region the SQS client uses, and vice versa.
+
+This gem **does not call SES**; it only enqueues to SQS. `ses_region` is
+purely informational — when set, it's added to the message payload so the
+downstream sender knows which region to send from:
+
+```json
+{ "sesRegion": "us-east-1" }
+```
 
 ## Campaign Tracking
 
@@ -182,10 +216,10 @@ Fullsend.configure do |config|
   config.s3_bucket     = "my-fullsend-bucket"
   config.s3_key_prefix = "outgoing/" # optional
 
-  # Optional: override the region for the S3 client only. Useful when the
-  # attachments bucket lives in a different region than the SQS queue.
-  # Defaults from AWS_S3_REGION. SQS continues to use the
-  # region resolved by aws_client_options.
+  # Optional: region for the S3 client only. Useful when the attachments
+  # bucket lives in a different region than the SQS queue. Defaults from
+  # AWS_S3_REGION; falls back to the generic `region` when unset. See the
+  # Regions table above.
   config.s3_region     = "us-west-2"
 end
 ```
