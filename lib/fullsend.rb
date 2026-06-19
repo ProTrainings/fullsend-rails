@@ -2,6 +2,7 @@ require "fullsend/version"
 require "fullsend/errors"
 require "fullsend/configuration"
 require "fullsend/delivery"
+require "fullsend/client"
 require "fullsend/mailer_helpers"
 require "fullsend/railtie" if defined?(Rails::Railtie)
 

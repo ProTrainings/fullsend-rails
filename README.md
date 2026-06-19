@@ -26,6 +26,12 @@ Fullsend.configure do |config|
   # Required only if you send attachments. Defaults from AWS_S3_BUCKET_NAME.
   config.s3_bucket      = ENV.fetch("AWS_S3_BUCKET_NAME", nil)
   config.s3_key_prefix  = "outgoing/" # optional, default ""
+
+  # Required only if you use the HTTP API client (Fullsend::Client, e.g.
+  # removing SES suppressions). Default from FULLSEND_API_URL/FULLSEND_API_KEY.
+  # See "HTTP API Client" below.
+  config.api_base_url   = ENV.fetch("FULLSEND_API_URL", nil)
+  config.api_key        = ENV.fetch("FULLSEND_API_KEY", nil)
 end
 ```
 
@@ -262,6 +268,56 @@ Notes:
   your mailer if you need fail-fast behavior.
 - SES caps the assembled message at ~40 MB; aim for total attachment size
   well under that.
+
+## HTTP API Client
+
+Most of this gem enqueues mail to SQS for asynchronous delivery. For the few
+operations that need a synchronous round-trip to the Fullsend service,
+`Fullsend::Client` makes signed HTTP requests to the Fullsend API.
+
+Configure the API base URL and HMAC signing key:
+
+```ruby
+Fullsend.configure do |config|
+  config.api_base_url = ENV.fetch("FULLSEND_API_URL")  # e.g. "https://api.fullsend.example"
+  config.api_key      = ENV.fetch("FULLSEND_API_KEY")  # HMAC signing secret
+end
+```
+
+Both default from their env var (`FULLSEND_API_URL` / `FULLSEND_API_KEY`) and
+fall back to Rails encrypted credentials under `credentials.fullsend`
+(`api_base_url`/`url` and `api_key`/`key`) when unset.
+
+Requests are authenticated with an HMAC-SHA256 signature over the request body
+(an empty string for bodyless verbs like `DELETE`):
+
+```
+Authorization: HMAC <hex(HMAC-SHA256(api_key, body))>
+```
+
+### Removing an SES suppression
+
+When SES hard-bounces or complains about an address it adds it to the account
+suppression list, blocking future delivery. Once the address is known good
+again, remove it:
+
+```ruby
+response = Fullsend::Client.new.delete_ses_suppression("user@example.com")
+
+if response.success?
+  # 2xx — removed, SES can deliver to it again
+elsif response.not_found?
+  # 404 — the address wasn't on the suppression list
+end
+```
+
+`delete_ses_suppression` issues `DELETE /v1/ses-suppressions/<url-encoded email>`.
+It returns a `Fullsend::Client::Response` (`#success?`, `#not_found?`,
+`#status_code`, `#body`, and `#data` for the parsed JSON body) rather than
+raising on an HTTP error status, so an expected 404 is a normal outcome.
+Transport-level failures (timeouts, refused connections) raise
+`Fullsend::ApiError`. Missing `api_base_url`/`api_key` raises
+`Fullsend::ConfigurationError`.
 
 ## License
 
