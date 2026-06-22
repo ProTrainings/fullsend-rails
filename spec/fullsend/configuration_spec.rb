@@ -14,6 +14,8 @@ RSpec.describe Fullsend::Configuration do
     AWS_ACCESS_KEY_ID
     AWS_SECRET_ACCESS_KEY
     AWS_REGION
+    FULLSEND_API_URL
+    FULLSEND_API_KEY
   ].freeze
 
   def stub_env(overrides = {})
@@ -108,6 +110,86 @@ RSpec.describe Fullsend::Configuration do
       config.fullsend_app_id = "MyApp"
       config.message_group_id = "my-app"
       expect { config.validate! }.not_to raise_error
+    end
+  end
+
+  describe "Fullsend API settings" do
+    it "reads api_base_url and api_key from ENV" do
+      stub_env(
+        "FULLSEND_API_URL" => "https://api.fullsend.example",
+        "FULLSEND_API_KEY" => "env-secret"
+      )
+      config = described_class.new
+      expect(config.api_base_url).to eq("https://api.fullsend.example")
+      expect(config.api_key).to eq("env-secret")
+    end
+
+    describe "#resolve_api_base_url / #resolve_api_key" do
+      it "prefers explicit config over Rails credentials" do
+        stub_env
+        rails_app = double("Rails.application")
+        credentials = double("credentials")
+        allow(credentials).to receive(:fullsend).and_return({ api_base_url: "https://creds.example", api_key: "creds-key" })
+        allow(rails_app).to receive(:credentials).and_return(credentials)
+        stub_const("Rails", double("Rails", application: rails_app))
+
+        config = described_class.new
+        config.api_base_url = "https://explicit.example"
+        config.api_key = "explicit-key"
+
+        expect(config.resolve_api_base_url).to eq("https://explicit.example")
+        expect(config.resolve_api_key).to eq("explicit-key")
+      end
+
+      it "falls back to Rails credentials under credentials.fullsend" do
+        stub_env
+        rails_app = double("Rails.application")
+        credentials = double("credentials")
+        allow(credentials).to receive(:fullsend).and_return({ api_base_url: "https://creds.example", api_key: "creds-key" })
+        allow(rails_app).to receive(:credentials).and_return(credentials)
+        stub_const("Rails", double("Rails", application: rails_app))
+
+        config = described_class.new
+        expect(config.resolve_api_base_url).to eq("https://creds.example")
+        expect(config.resolve_api_key).to eq("creds-key")
+      end
+
+      it "accepts the legacy :url/:key credential names" do
+        stub_env
+        rails_app = double("Rails.application")
+        credentials = double("credentials")
+        allow(credentials).to receive(:fullsend).and_return({ url: "https://legacy.example", key: "legacy-key" })
+        allow(rails_app).to receive(:credentials).and_return(credentials)
+        stub_const("Rails", double("Rails", application: rails_app))
+
+        config = described_class.new
+        expect(config.resolve_api_base_url).to eq("https://legacy.example")
+        expect(config.resolve_api_key).to eq("legacy-key")
+      end
+    end
+
+    describe "#validate_api!" do
+      it "raises when api_base_url is missing" do
+        stub_env
+        config = described_class.new
+        config.api_key = "secret"
+        expect { config.validate_api! }.to raise_error(Fullsend::ConfigurationError, /api_base_url/)
+      end
+
+      it "raises when api_key is missing" do
+        stub_env
+        config = described_class.new
+        config.api_base_url = "https://api.fullsend.example"
+        expect { config.validate_api! }.to raise_error(Fullsend::ConfigurationError, /api_key/)
+      end
+
+      it "does not raise when both are set" do
+        stub_env
+        config = described_class.new
+        config.api_base_url = "https://api.fullsend.example"
+        config.api_key = "secret"
+        expect { config.validate_api! }.not_to raise_error
+      end
     end
   end
 

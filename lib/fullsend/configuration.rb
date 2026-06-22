@@ -4,7 +4,8 @@ module Fullsend
                   :s3_bucket, :s3_key_prefix,
                   :sqs_region, :s3_region, :ses_region,
                   :access_key_id, :secret_access_key, :region,
-                  :legacy_tag_headers
+                  :legacy_tag_headers,
+                  :api_base_url, :api_key
 
     def initialize
       @queue_name              = ENV["SQS_EMAIL_QUEUE_NAME"]
@@ -34,6 +35,16 @@ module Fullsend
       # emitting its legacy header (e.g. "X-MSYS-API") without rewriting
       # every mailer. Empty by default — the gem stays provider-agnostic.
       @legacy_tag_headers      = []
+      # Fullsend HTTP API client settings. These power Fullsend::Client
+      # (e.g. removing an address from the SES suppression list) and are
+      # unrelated to the SQS delivery path. Both default from their env
+      # var and fall back to Rails encrypted credentials under
+      # `credentials.fullsend` (keys :api_base_url/:url and :api_key/:key)
+      # when resolved via resolve_api_base_url / resolve_api_key.
+      #   api_base_url (FULLSEND_API_URL) -> e.g. "https://api.fullsend.example"
+      #   api_key      (FULLSEND_API_KEY) -> the HMAC signing secret
+      @api_base_url            = ENV["FULLSEND_API_URL"]
+      @api_key                 = ENV["FULLSEND_API_KEY"]
     end
 
     def validate!
@@ -44,6 +55,39 @@ module Fullsend
       if message_group_id.nil? || message_group_id.empty?
         raise ConfigurationError, "message_group_id is required. Set it via Fullsend.configure."
       end
+    end
+
+    # Validates the settings Fullsend::Client needs. Separate from
+    # validate! because the HTTP API path is independent of SQS delivery —
+    # an app can use one without configuring the other.
+    def validate_api!
+      if resolve_api_base_url.to_s.empty?
+        raise ConfigurationError,
+          "api_base_url is required for Fullsend::Client. Set it via Fullsend.configure or FULLSEND_API_URL."
+      end
+
+      if resolve_api_key.to_s.empty?
+        raise ConfigurationError,
+          "api_key is required for Fullsend::Client. Set it via Fullsend.configure or FULLSEND_API_KEY."
+      end
+    end
+
+    # Explicit config / env value, falling back to Rails credentials under
+    # credentials.fullsend (:api_base_url, then legacy :url).
+    def resolve_api_base_url
+      return api_base_url unless api_base_url.to_s.empty?
+
+      creds = fullsend_rails_credentials
+      creds && (creds[:api_base_url] || creds[:url])
+    end
+
+    # Explicit config / env value, falling back to Rails credentials under
+    # credentials.fullsend (:api_key, then legacy :key).
+    def resolve_api_key
+      return api_key unless api_key.to_s.empty?
+
+      creds = fullsend_rails_credentials
+      creds && (creds[:api_key] || creds[:key])
     end
 
     # Resolves AWS credentials and the generic default region, shared by
@@ -122,6 +166,12 @@ module Fullsend
         secret_access_key: aws[:secret_access_key] || aws[:secret_key],
         region: aws[:region]
       }
+    end
+
+    def fullsend_rails_credentials
+      return nil unless defined?(Rails) && Rails.application.respond_to?(:credentials)
+
+      Rails.application.credentials.fullsend
     end
   end
 end
