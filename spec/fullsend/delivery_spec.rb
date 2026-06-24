@@ -378,6 +378,51 @@ RSpec.describe Fullsend::Delivery do
         mail
       end
 
+      it "sends the html part as the body for a multipart (attachment) email" do
+        # ActionMailer renders an HTML template + a PDF attachment as
+        # multipart/mixed, which moves the HTML into html_part and leaves
+        # mail.body.raw_source empty. The body must still reach SQS.
+        mail = Mail.new do
+          from "App <noreply@example.com>"
+          to   "user@example.com"
+        end
+        mail.subject = "Your receipt"
+        mail.html_part = Mail::Part.new do
+          content_type "text/html; charset=UTF-8"
+          body "<h1>Receipt</h1><p>Thanks for your payment.</p>"
+        end
+        mail.attachments["receipt.pdf"] = "%PDF-1.4 binary bytes"
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(sqs_client).to have_received(:send_message) do |args|
+          body = JSON.parse(args[:message_body])
+          expect(body["body"]).to include("<h1>Receipt</h1>")
+        end
+      end
+
+      it "falls back to the text part when a multipart email has no html part" do
+        mail = Mail.new do
+          from "App <noreply@example.com>"
+          to   "user@example.com"
+        end
+        mail.subject = "Your receipt"
+        mail.text_part = Mail::Part.new do
+          content_type "text/plain; charset=UTF-8"
+          body "Thanks for your payment."
+        end
+        mail.attachments["receipt.pdf"] = "%PDF-1.4 binary bytes"
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(sqs_client).to have_received(:send_message) do |args|
+          body = JSON.parse(args[:message_body])
+          expect(body["body"]).to include("Thanks for your payment.")
+        end
+      end
+
       it "uploads each attachment to S3 with prefix/<uuid>-<filename> key" do
         mail = mail_with_attachment
 
