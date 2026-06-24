@@ -87,7 +87,7 @@ module Fullsend
           { fromAddress: mail["from"]&.formatted, subject: mail.subject }
         else
           {
-            body: mail.body.raw_source,
+            body: message_body(mail),
             toAddresses: mail["to"]&.formatted,
             ccAddresses: mail["cc"]&.formatted,
             bccAddresses: mail["bcc"]&.formatted,
@@ -104,6 +104,16 @@ module Fullsend
 
       message[:attachments] = attachment_keys if attachment_keys.any?
       message
+    end
+
+    # For a multipart message (e.g. an HTML email with a PDF attachment),
+    # mail.body.raw_source is empty — the content lives in the parts. Fall
+    # back to the html/text part so the body still reaches SQS.
+    def message_body(mail)
+      return mail.body.raw_source unless mail.multipart?
+
+      part = mail.html_part || mail.text_part
+      part ? part.body.decoded : mail.body.raw_source
     end
 
     def upload_attachments(mail)
