@@ -99,9 +99,6 @@ module Fullsend
       extract_template(mail, message)
       extract_ses_tags(mail, message)
 
-      ses_region = Fullsend.configuration.ses_region
-      message[:sesRegion] = ses_region if ses_region && !ses_region.to_s.empty?
-
       message[:attachments] = attachment_keys if attachment_keys.any?
       message
     end

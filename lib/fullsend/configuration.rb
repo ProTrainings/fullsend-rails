@@ -2,7 +2,7 @@ module Fullsend
   class Configuration
     attr_accessor :queue_name, :fullsend_app_id, :message_group_id,
                   :s3_bucket, :s3_key_prefix,
-                  :sqs_region, :s3_region, :ses_region,
+                  :sqs_region, :s3_region,
                   :access_key_id, :secret_access_key, :region,
                   :legacy_tag_headers,
                   :api_base_url, :api_key
@@ -18,12 +18,8 @@ module Fullsend
       # `region` (AWS_REGION) below.
       #   sqs_region (AWS_SQS_REGION) -> the SQS client
       #   s3_region  (AWS_S3_REGION)  -> the S3 attachments client
-      #   ses_region (AWS_SES_REGION) -> carried in the SQS payload as
-      #     "sesRegion" for the downstream SES sender. This gem makes no
-      #     SES calls itself; it only enqueues to SQS.
       @sqs_region     = ENV["AWS_SQS_REGION"]
       @s3_region      = ENV["AWS_S3_REGION"]
-      @ses_region     = ENV["AWS_SES_REGION"]
       @access_key_id           = nil
       @secret_access_key       = nil
       # Generic default region (AWS_REGION). Used for credential resolution
