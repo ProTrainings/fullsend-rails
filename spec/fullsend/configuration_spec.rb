@@ -10,7 +10,6 @@ RSpec.describe Fullsend::Configuration do
     AWS_S3_BUCKET_NAME
     AWS_SQS_REGION
     AWS_S3_REGION
-    AWS_SES_REGION
     AWS_ACCESS_KEY_ID
     AWS_SECRET_ACCESS_KEY
     AWS_REGION
@@ -75,16 +74,6 @@ RSpec.describe Fullsend::Configuration do
     it "defaults s3_region to nil when ENV not set" do
       stub_env
       expect(described_class.new.s3_region).to be_nil
-    end
-
-    it "reads ses_region from ENV" do
-      stub_env("AWS_SES_REGION" => "eu-west-1")
-      expect(described_class.new.ses_region).to eq("eu-west-1")
-    end
-
-    it "defaults ses_region to nil when ENV not set" do
-      stub_env
-      expect(described_class.new.ses_region).to be_nil
     end
 
     it "defaults s3_key_prefix to an empty string" do

@@ -53,7 +53,7 @@ The gem looks for credentials in this order:
 
 ### Regions
 
-Each AWS service this gem touches can live in its own region. All three
+Each AWS service this gem touches can live in its own region. Both
 default from their own env var and fall back to the generic `region`
 (`AWS_REGION`) when unset:
 
@@ -62,26 +62,16 @@ default from their own env var and fall back to the generic `region`
 | `region` | `AWS_REGION` | Generic default + credential resolution |
 | `sqs_region` | `AWS_SQS_REGION` | The SQS client (queue) |
 | `s3_region` | `AWS_S3_REGION` | The S3 client (attachments bucket) |
-| `ses_region` | `AWS_SES_REGION` | Carried in the SQS payload as `sesRegion` for the downstream SES sender |
 
 ```ruby
 Fullsend.configure do |config|
   config.sqs_region = "us-east-1"  # queue lives here
   config.s3_region  = "us-west-2"  # attachments bucket lives here
-  config.ses_region = "us-east-1"  # downstream service sends from here
 end
 ```
 
 The SQS and S3 clients are built independently — setting `s3_region` never
 affects the region the SQS client uses, and vice versa.
-
-This gem **does not call SES**; it only enqueues to SQS. `ses_region` is
-purely informational — when set, it's added to the message payload so the
-downstream sender knows which region to send from:
-
-```json
-{ "sesRegion": "us-east-1" }
-```
 
 ## Campaign Tracking
 
