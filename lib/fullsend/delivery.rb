@@ -99,6 +99,8 @@ module Fullsend
       extract_template(mail, message)
       extract_ses_tags(mail, message)
 
+      message[:replyToAddresses] = mail["reply-to"].formatted if mail["reply-to"]
+
       message[:attachments] = attachment_keys if attachment_keys.any?
       message
     end

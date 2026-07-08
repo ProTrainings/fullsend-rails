@@ -144,6 +144,56 @@ RSpec.describe Fullsend::Delivery do
       end
     end
 
+    context "reply-to header" do
+      it "includes replyToAddresses on a non-templated email" do
+        mail = Mail.new do
+          from     "App <noreply@example.com>"
+          to       "user@example.com"
+          reply_to "Ada Lovelace <ada@example.com>"
+          subject  "Welcome"
+          body     "Hello"
+        end
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(sqs_client).to have_received(:send_message) do |args|
+          body = JSON.parse(args[:message_body])
+          expect(body["replyToAddresses"]).to eq(["Ada Lovelace <ada@example.com>"])
+        end
+      end
+
+      it "includes replyToAddresses on a templated email" do
+        mail = template_mail
+        mail.reply_to = "Ada Lovelace <ada@example.com>"
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(sqs_client).to have_received(:send_message) do |args|
+          body = JSON.parse(args[:message_body])
+          expect(body["replyToAddresses"]).to eq(["Ada Lovelace <ada@example.com>"])
+        end
+      end
+
+      it "omits replyToAddresses when no reply-to is set" do
+        mail = Mail.new do
+          from    "a@b.com"
+          to      "c@d.com"
+          subject "Test"
+          body    "body"
+        end
+
+        delivery = described_class.new({})
+        delivery.deliver!(mail)
+
+        expect(sqs_client).to have_received(:send_message) do |args|
+          body = JSON.parse(args[:message_body])
+          expect(body).not_to have_key("replyToAddresses")
+        end
+      end
+    end
+
     it "includes fullsend_app_id as SQS message attribute" do
       delivery = described_class.new({})
       delivery.deliver!(template_mail)
