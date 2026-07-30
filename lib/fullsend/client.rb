@@ -1,19 +1,21 @@
 require "net/http"
 require "uri"
 require "json"
-require "openssl"
 require "erb"
 
 module Fullsend
   # HTTP client for the Fullsend service API. Distinct from the SQS-based
   # ActionMailer delivery path (Fullsend::Delivery): this makes synchronous
-  # signed requests to the Fullsend HTTP API.
+  # authenticated requests to the Fullsend HTTP API.
   #
-  # Requests are authenticated with an HMAC signature over the request body
-  # (empty string for bodyless verbs like DELETE), matching the service's
+  # Requests are authenticated with a bearer token, matching the service's
   # scheme:
   #
-  #   Authorization: HMAC <hex(HMAC-SHA256(api_key, body))>
+  #   Authorization: Bearer <api_token>
+  #
+  # Minting and refreshing that token is the host application's
+  # responsibility; this client only forwards the configured value (see
+  # Configuration#api_token, which accepts a callable for expiring tokens).
   #
   # Usage:
   #
@@ -22,7 +24,7 @@ module Fullsend
   # Methods return a Fullsend::Client::Response. Transport-level failures
   # (timeouts, connection errors) raise Fullsend::ApiError.
   class Client
-    HMAC_PREFIX = "HMAC".freeze
+    BEARER_PREFIX = "Bearer".freeze
     SES_SUPPRESSIONS_PATH = "v1/ses-suppressions".freeze
 
     DEFAULT_OPEN_TIMEOUT = 2
@@ -88,7 +90,7 @@ module Fullsend
       uri = build_uri(path)
       req = REQUEST_CLASSES.fetch(method).new(uri)
       req["Content-Type"] = "application/json"
-      req["Authorization"] = signature(payload)
+      req["Authorization"] = authorization
       req.body = payload unless payload.empty?
 
       res = connection(uri).request(req)
@@ -106,8 +108,16 @@ module Fullsend
       body.to_json
     end
 
-    def signature(payload)
-      "#{HMAC_PREFIX} #{OpenSSL::HMAC.hexdigest("SHA256", @configuration.resolve_api_key, payload)}"
+    # Resolved per request so a callable api_token picks up a token the host
+    # application refreshed since the last call.
+    def authorization
+      token = @configuration.resolve_api_token.to_s
+      if token.empty?
+        raise ConfigurationError,
+          "api_token resolved to an empty value for Fullsend::Client. Check Fullsend.configure or FULLSEND_API_TOKEN."
+      end
+
+      "#{BEARER_PREFIX} #{token}"
     end
 
     def build_uri(path)

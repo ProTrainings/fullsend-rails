@@ -28,10 +28,10 @@ Fullsend.configure do |config|
   config.s3_key_prefix  = "outgoing/" # optional, default ""
 
   # Required only if you use the HTTP API client (Fullsend::Client, e.g.
-  # removing SES suppressions). Default from FULLSEND_API_URL/FULLSEND_API_KEY.
+  # removing SES suppressions). Default from FULLSEND_API_URL/FULLSEND_API_TOKEN.
   # See "HTTP API Client" below.
   config.api_base_url   = ENV.fetch("FULLSEND_API_URL", nil)
-  config.api_key        = ENV.fetch("FULLSEND_API_KEY", nil)
+  config.api_token      = ENV.fetch("FULLSEND_API_TOKEN", nil)
 end
 ```
 
@@ -263,27 +263,44 @@ Notes:
 
 Most of this gem enqueues mail to SQS for asynchronous delivery. For the few
 operations that need a synchronous round-trip to the Fullsend service,
-`Fullsend::Client` makes signed HTTP requests to the Fullsend API.
+`Fullsend::Client` makes authenticated HTTP requests to the Fullsend API.
 
-Configure the API base URL and HMAC signing key:
+Configure the API base URL and bearer token:
 
 ```ruby
 Fullsend.configure do |config|
-  config.api_base_url = ENV.fetch("FULLSEND_API_URL")  # e.g. "https://api.fullsend.example"
-  config.api_key      = ENV.fetch("FULLSEND_API_KEY")  # HMAC signing secret
+  config.api_base_url = ENV.fetch("FULLSEND_API_URL")    # e.g. "https://api.fullsend.example"
+  config.api_token    = ENV.fetch("FULLSEND_API_TOKEN")  # bearer token
 end
 ```
 
-Both default from their env var (`FULLSEND_API_URL` / `FULLSEND_API_KEY`) and
+Both default from their env var (`FULLSEND_API_URL` / `FULLSEND_API_TOKEN`) and
 fall back to Rails encrypted credentials under `credentials.fullsend`
-(`api_base_url`/`url` and `api_key`/`key`) when unset.
+(`api_base_url`/`url` and `api_token`/`token`) when unset.
 
-Requests are authenticated with an HMAC-SHA256 signature over the request body
-(an empty string for bodyless verbs like `DELETE`):
+Requests are authenticated with a bearer token:
 
 ```
-Authorization: HMAC <hex(HMAC-SHA256(api_key, body))>
+Authorization: Bearer <api_token>
 ```
+
+### Tokens that expire
+
+Obtaining and refreshing the token is your application's job — the gem only
+forwards what it's given. If your token is short-lived (an OAuth2
+client-credentials JWT, for example), set `api_token` to a callable instead of
+a String:
+
+```ruby
+Fullsend.configure do |config|
+  config.api_token = -> { MyTokenCache.access_token }
+end
+```
+
+The callable is invoked on every request, so a token your app refreshes is
+picked up automatically without reconfiguring the gem. Keep the caching and
+expiry handling in your own token class — `Fullsend::Client` deliberately owns
+no token lifecycle.
 
 ### Removing an SES suppression
 
@@ -306,8 +323,8 @@ It returns a `Fullsend::Client::Response` (`#success?`, `#not_found?`,
 `#status_code`, `#body`, and `#data` for the parsed JSON body) rather than
 raising on an HTTP error status, so an expected 404 is a normal outcome.
 Transport-level failures (timeouts, refused connections) raise
-`Fullsend::ApiError`. Missing `api_base_url`/`api_key` raises
-`Fullsend::ConfigurationError`.
+`Fullsend::ApiError`. A missing `api_base_url`/`api_token` — or a callable
+`api_token` that resolves to nothing — raises `Fullsend::ConfigurationError`.
 
 ## License
 
