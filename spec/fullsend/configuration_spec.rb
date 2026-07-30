@@ -14,7 +14,7 @@ RSpec.describe Fullsend::Configuration do
     AWS_SECRET_ACCESS_KEY
     AWS_REGION
     FULLSEND_API_URL
-    FULLSEND_API_KEY
+    FULLSEND_API_TOKEN
   ].freeze
 
   def stub_env(overrides = {})
@@ -103,57 +103,83 @@ RSpec.describe Fullsend::Configuration do
   end
 
   describe "Fullsend API settings" do
-    it "reads api_base_url and api_key from ENV" do
+    def stub_fullsend_credentials(values)
+      rails_app = double("Rails.application")
+      credentials = double("credentials")
+      allow(credentials).to receive(:fullsend).and_return(values)
+      allow(rails_app).to receive(:credentials).and_return(credentials)
+      stub_const("Rails", double("Rails", application: rails_app))
+    end
+
+    it "reads api_base_url and api_token from ENV" do
       stub_env(
         "FULLSEND_API_URL" => "https://api.fullsend.example",
-        "FULLSEND_API_KEY" => "env-secret"
+        "FULLSEND_API_TOKEN" => "env-token"
       )
       config = described_class.new
       expect(config.api_base_url).to eq("https://api.fullsend.example")
-      expect(config.api_key).to eq("env-secret")
+      expect(config.api_token).to eq("env-token")
     end
 
-    describe "#resolve_api_base_url / #resolve_api_key" do
+    describe "#resolve_api_base_url / #resolve_api_token" do
       it "prefers explicit config over Rails credentials" do
         stub_env
-        rails_app = double("Rails.application")
-        credentials = double("credentials")
-        allow(credentials).to receive(:fullsend).and_return({ api_base_url: "https://creds.example", api_key: "creds-key" })
-        allow(rails_app).to receive(:credentials).and_return(credentials)
-        stub_const("Rails", double("Rails", application: rails_app))
+        stub_fullsend_credentials({ api_base_url: "https://creds.example", api_token: "creds-token" })
 
         config = described_class.new
         config.api_base_url = "https://explicit.example"
-        config.api_key = "explicit-key"
+        config.api_token = "explicit-token"
 
         expect(config.resolve_api_base_url).to eq("https://explicit.example")
-        expect(config.resolve_api_key).to eq("explicit-key")
+        expect(config.resolve_api_token).to eq("explicit-token")
       end
 
       it "falls back to Rails credentials under credentials.fullsend" do
         stub_env
-        rails_app = double("Rails.application")
-        credentials = double("credentials")
-        allow(credentials).to receive(:fullsend).and_return({ api_base_url: "https://creds.example", api_key: "creds-key" })
-        allow(rails_app).to receive(:credentials).and_return(credentials)
-        stub_const("Rails", double("Rails", application: rails_app))
+        stub_fullsend_credentials({ api_base_url: "https://creds.example", api_token: "creds-token" })
 
         config = described_class.new
         expect(config.resolve_api_base_url).to eq("https://creds.example")
-        expect(config.resolve_api_key).to eq("creds-key")
+        expect(config.resolve_api_token).to eq("creds-token")
       end
 
-      it "accepts the legacy :url/:key credential names" do
+      it "accepts the legacy :url/:token credential names" do
         stub_env
-        rails_app = double("Rails.application")
-        credentials = double("credentials")
-        allow(credentials).to receive(:fullsend).and_return({ url: "https://legacy.example", key: "legacy-key" })
-        allow(rails_app).to receive(:credentials).and_return(credentials)
-        stub_const("Rails", double("Rails", application: rails_app))
+        stub_fullsend_credentials({ url: "https://legacy.example", token: "legacy-token" })
 
         config = described_class.new
         expect(config.resolve_api_base_url).to eq("https://legacy.example")
-        expect(config.resolve_api_key).to eq("legacy-key")
+        expect(config.resolve_api_token).to eq("legacy-token")
+      end
+
+      # The host app owns token minting/refresh, so a callable is resolved
+      # on every read rather than memoized.
+      it "calls a callable api_token" do
+        stub_env
+        config = described_class.new
+        config.api_token = -> { "callable-token" }
+
+        expect(config.resolve_api_token).to eq("callable-token")
+      end
+
+      it "re-invokes the callable on each resolve" do
+        stub_env
+        tokens = %w[first second]
+        config = described_class.new
+        config.api_token = -> { tokens.shift }
+
+        expect(config.resolve_api_token).to eq("first")
+        expect(config.resolve_api_token).to eq("second")
+      end
+
+      it "prefers a callable api_token over Rails credentials" do
+        stub_env
+        stub_fullsend_credentials({ api_token: "creds-token" })
+
+        config = described_class.new
+        config.api_token = -> { "callable-token" }
+
+        expect(config.resolve_api_token).to eq("callable-token")
       end
     end
 
@@ -161,23 +187,36 @@ RSpec.describe Fullsend::Configuration do
       it "raises when api_base_url is missing" do
         stub_env
         config = described_class.new
-        config.api_key = "secret"
+        config.api_token = "token"
         expect { config.validate_api! }.to raise_error(Fullsend::ConfigurationError, /api_base_url/)
       end
 
-      it "raises when api_key is missing" do
+      it "raises when api_token is missing" do
         stub_env
         config = described_class.new
         config.api_base_url = "https://api.fullsend.example"
-        expect { config.validate_api! }.to raise_error(Fullsend::ConfigurationError, /api_key/)
+        expect { config.validate_api! }.to raise_error(Fullsend::ConfigurationError, /api_token/)
       end
 
       it "does not raise when both are set" do
         stub_env
         config = described_class.new
         config.api_base_url = "https://api.fullsend.example"
-        config.api_key = "secret"
+        config.api_token = "token"
         expect { config.validate_api! }.not_to raise_error
+      end
+
+      # validate_api! only checks that a token source exists; it must not
+      # invoke the callable (that happens once per request in the client).
+      it "does not invoke a callable api_token" do
+        stub_env
+        called = false
+        config = described_class.new
+        config.api_base_url = "https://api.fullsend.example"
+        config.api_token = -> { called = true }
+
+        expect { config.validate_api! }.not_to raise_error
+        expect(called).to be(false)
       end
     end
   end

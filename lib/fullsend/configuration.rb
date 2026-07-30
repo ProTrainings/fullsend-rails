@@ -5,7 +5,7 @@ module Fullsend
                   :sqs_region, :s3_region,
                   :access_key_id, :secret_access_key, :region,
                   :legacy_tag_headers,
-                  :api_base_url, :api_key
+                  :api_base_url, :api_token
 
     def initialize
       @queue_name              = ENV["SQS_EMAIL_QUEUE_NAME"]
@@ -35,12 +35,22 @@ module Fullsend
       # (e.g. removing an address from the SES suppression list) and are
       # unrelated to the SQS delivery path. Both default from their env
       # var and fall back to Rails encrypted credentials under
-      # `credentials.fullsend` (keys :api_base_url/:url and :api_key/:key)
-      # when resolved via resolve_api_base_url / resolve_api_key.
-      #   api_base_url (FULLSEND_API_URL) -> e.g. "https://api.fullsend.example"
-      #   api_key      (FULLSEND_API_KEY) -> the HMAC signing secret
+      # `credentials.fullsend` (keys :api_base_url/:url and :api_token/:token)
+      # when resolved via resolve_api_base_url / resolve_api_token.
+      #   api_base_url (FULLSEND_API_URL)   -> e.g. "https://api.fullsend.example"
+      #   api_token    (FULLSEND_API_TOKEN) -> the bearer token
+      #
+      # api_token may be a String or any callable returning one. Obtaining
+      # and refreshing the token is the host application's job — the gem
+      # only forwards it — so a callable is the right choice whenever the
+      # token expires:
+      #
+      #   config.api_token = -> { MyTokenCache.access_token }
+      #
+      # It is invoked on every request, so a refresh inside the app is
+      # picked up without reconfiguring the gem.
       @api_base_url            = ENV["FULLSEND_API_URL"]
-      @api_key                 = ENV["FULLSEND_API_KEY"]
+      @api_token               = ENV["FULLSEND_API_TOKEN"]
     end
 
     def validate!
@@ -62,9 +72,9 @@ module Fullsend
           "api_base_url is required for Fullsend::Client. Set it via Fullsend.configure or FULLSEND_API_URL."
       end
 
-      if resolve_api_key.to_s.empty?
+      if api_token_source.nil?
         raise ConfigurationError,
-          "api_key is required for Fullsend::Client. Set it via Fullsend.configure or FULLSEND_API_KEY."
+          "api_token is required for Fullsend::Client. Set it via Fullsend.configure or FULLSEND_API_TOKEN."
       end
     end
 
@@ -77,13 +87,22 @@ module Fullsend
       creds && (creds[:api_base_url] || creds[:url])
     end
 
+    # The resolved bearer token. Calls the configured value when it is a
+    # callable, so a host-managed token cache is re-read on every request.
+    def resolve_api_token
+      source = api_token_source
+      source.respond_to?(:call) ? source.call : source
+    end
+
     # Explicit config / env value, falling back to Rails credentials under
-    # credentials.fullsend (:api_key, then legacy :key).
-    def resolve_api_key
-      return api_key unless api_key.to_s.empty?
+    # credentials.fullsend (:api_token, then legacy :token). Returns the
+    # unresolved value — a String or a callable — or nil when unconfigured.
+    def api_token_source
+      return api_token if api_token.respond_to?(:call)
+      return api_token unless api_token.to_s.empty?
 
       creds = fullsend_rails_credentials
-      creds && (creds[:api_key] || creds[:key])
+      creds && (creds[:api_token] || creds[:token])
     end
 
     # Resolves AWS credentials and the generic default region, shared by

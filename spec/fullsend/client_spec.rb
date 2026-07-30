@@ -1,8 +1,7 @@
 require "spec_helper"
-require "openssl"
 
 RSpec.describe Fullsend::Client do
-  let(:api_key) { "test-secret" }
+  let(:api_token) { "test-token" }
   let(:base_url) { "https://api.fullsend.example" }
 
   let(:http) { instance_double(Net::HTTP) }
@@ -11,7 +10,7 @@ RSpec.describe Fullsend::Client do
   around do |example|
     original_env = ENV.to_hash
     ENV.delete("FULLSEND_API_URL")
-    ENV.delete("FULLSEND_API_KEY")
+    ENV.delete("FULLSEND_API_TOKEN")
     example.run
   ensure
     ENV.replace(original_env)
@@ -20,7 +19,7 @@ RSpec.describe Fullsend::Client do
   before do
     Fullsend.configure do |c|
       c.api_base_url = base_url
-      c.api_key = api_key
+      c.api_token = api_token
     end
 
     allow(Net::HTTP).to receive(:new).and_return(http)
@@ -40,10 +39,6 @@ RSpec.describe Fullsend::Client do
     captured.last
   end
 
-  def expected_signature(body)
-    "HMAC #{OpenSSL::HMAC.hexdigest("SHA256", api_key, body)}"
-  end
-
   describe "#delete_ses_suppression" do
     it "issues a DELETE to the url-encoded suppression path" do
       described_class.new.delete_ses_suppression("user@example.com")
@@ -52,10 +47,10 @@ RSpec.describe Fullsend::Client do
       expect(last_request.path).to eq("/v1/ses-suppressions/user%40example.com")
     end
 
-    it "signs the empty body with HMAC-SHA256 over the api_key" do
+    it "sends the api_token as a bearer token" do
       described_class.new.delete_ses_suppression("user@example.com")
 
-      expect(last_request["Authorization"]).to eq(expected_signature(""))
+      expect(last_request["Authorization"]).to eq("Bearer test-token")
     end
 
     it "url-encodes addresses with reserved characters" do
@@ -94,21 +89,52 @@ RSpec.describe Fullsend::Client do
     end
   end
 
+  # Minting the token is the host app's job, so a callable is the supported
+  # way to hand the gem a token that expires.
+  describe "a callable api_token" do
+    it "sends the value the callable returns" do
+      Fullsend.configure { |c| c.api_token = -> { "from-callable" } }
+
+      described_class.new.delete_ses_suppression("user@example.com")
+
+      expect(last_request["Authorization"]).to eq("Bearer from-callable")
+    end
+
+    it "re-invokes the callable on every request so a refresh is picked up" do
+      tokens = %w[first second]
+      Fullsend.configure { |c| c.api_token = -> { tokens.shift } }
+
+      client = described_class.new
+      client.delete_ses_suppression("user@example.com")
+      client.delete_ses_suppression("user@example.com")
+
+      expect(captured.map { |req| req["Authorization"] })
+        .to eq(["Bearer first", "Bearer second"])
+    end
+
+    it "raises ConfigurationError when the callable returns nothing" do
+      Fullsend.configure { |c| c.api_token = -> {} }
+
+      expect { described_class.new.delete_ses_suppression("user@example.com") }
+        .to raise_error(Fullsend::ConfigurationError, /api_token/)
+    end
+  end
+
   describe "configuration validation" do
     it "raises ConfigurationError when api_base_url is missing" do
       Fullsend.reset_configuration!
-      Fullsend.configure { |c| c.api_key = api_key }
+      Fullsend.configure { |c| c.api_token = api_token }
 
       expect { described_class.new.delete_ses_suppression("user@example.com") }
         .to raise_error(Fullsend::ConfigurationError, /api_base_url/)
     end
 
-    it "raises ConfigurationError when api_key is missing" do
+    it "raises ConfigurationError when api_token is missing" do
       Fullsend.reset_configuration!
       Fullsend.configure { |c| c.api_base_url = base_url }
 
       expect { described_class.new.delete_ses_suppression("user@example.com") }
-        .to raise_error(Fullsend::ConfigurationError, /api_key/)
+        .to raise_error(Fullsend::ConfigurationError, /api_token/)
     end
   end
 
