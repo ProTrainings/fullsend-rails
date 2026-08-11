@@ -5,7 +5,8 @@ module Fullsend
                   :sqs_region, :s3_region,
                   :access_key_id, :secret_access_key, :region,
                   :legacy_tag_headers,
-                  :api_base_url, :api_token
+                  :api_base_url, :api_token,
+                  :event_queue_name
 
     def initialize
       @queue_name              = ENV["SQS_EMAIL_QUEUE_NAME"]
@@ -51,6 +52,10 @@ module Fullsend
       # picked up without reconfiguring the gem.
       @api_base_url            = ENV["FULLSEND_API_URL"]
       @api_token               = ENV["FULLSEND_API_TOKEN"]
+      # ActiveJob queue for Fullsend::EventJob (Fullsend.track_event_later).
+      # nil means :default. Events are low-priority relative to user-facing
+      # work, so an app with a busy default queue will want its own.
+      @event_queue_name        = ENV["FULLSEND_EVENT_QUEUE"]
     end
 
     def validate!
