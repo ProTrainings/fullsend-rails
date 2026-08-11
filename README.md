@@ -326,6 +326,112 @@ Transport-level failures (timeouts, refused connections) raise
 `Fullsend::ApiError`. A missing `api_base_url`/`api_token` — or a callable
 `api_token` that resolves to nothing — raises `Fullsend::ConfigurationError`.
 
+## Event Triggers
+
+Automations in Fullsend are armed by *events* — domain facts your app reports
+("a user started a course"). The app does not name a campaign or a recipient
+list: it says what happened, and every automation whose triggers listen for that
+key decides for itself what to do. The same key can open a run in one
+automation, advance a run in a second, and end a run in a third.
+
+From a request or a model callback, enqueue it:
+
+```ruby
+Fullsend.track_event_later(
+  "course.started",
+  email:      user.email,
+  subject_id: "u_#{user.id}",
+  properties: {
+    course_id:   course.id,
+    course_name: course.name,
+    user:        { first_name: user.first_name, last_name: user.last_name }
+  }
+)
+```
+
+which posts to the intake:
+
+```json
+{
+  "app_id": "3163870b-4658-4d36-8a0d-e5c9d361800f",
+  "event_key": "course.started",
+  "subject_id": "u_12345",
+  "email": "joe@gmail.com",
+  "properties": {
+    "course_id": 2,
+    "course_name": "Course Two",
+    "user": { "first_name": "John", "last_name": "Doe" }
+  }
+}
+```
+
+Uses the same `api_base_url` / `api_token` as the HTTP API Client above.
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `event_key` | yes | The registry key, e.g. `course.started` |
+| `email` | yes | The delivery address; how a run is found or created |
+| `app_id` | yes | Defaults to the configured `fullsend_app_id` |
+| `subject_id` | no | Your app's id for the subject, for correlation |
+| `properties` | no | Becomes the run's data context — see below |
+
+### Properties
+
+`properties` becomes the run's data context when an automation enrolls, so
+condition nodes downstream read it by dot path (`user.first_name`,
+`course_id`). Nest freely; keep values JSON-serializable.
+
+An automation's *run grouping* names the property runs are keyed by — a
+`course.started` event carrying `course_id: 2` opens a run per course rather
+than one per person. An event missing that property is not an error; it simply
+isn't a fact that automation was asked about, and it's skipped. So send the
+properties your automations group and branch on, every time.
+
+### Sync vs enqueued
+
+`track_event_later` enqueues `Fullsend::EventJob` (ActiveJob) — the right
+default, since the intake is an external service and does not belong in the
+critical path of a user action. The job retries on `Fullsend::ApiError` (5
+attempts, growing backoff) so a blip does not silently lose an event, and
+discards immediately on a missing `event_key`/`email`/`app_id`, which would fail
+identically on every attempt. Give it its own queue if your default queue is
+busy:
+
+```ruby
+Fullsend.configure { |config| config.event_queue_name = "fullsend_events" }
+```
+
+Job arguments go through ActiveJob serialization, so `properties` must be
+strings, numbers, booleans, arrays, and hashes of the same. Pass a record's
+attributes, not the record.
+
+Use `Fullsend.track_event` for the synchronous call — a rake task, a backfill,
+or anywhere you want to inspect the outcome:
+
+```ruby
+result = Fullsend.track_event("course.started", email: user.email, properties: { course_id: 1 })
+
+result.registered?       # false => the key is not in the registry (or archived)
+result.matched_campaigns # automations whose triggers matched
+result.enrolled          # runs opened
+result.signalled         # runs advanced
+result.stopped           # runs ended
+```
+
+### An unregistered key is accepted, not rejected
+
+An event whose key is missing from the registry — or archived — comes back
+**2xx** with `registered?` false. That is deliberate: rejecting would let a
+registry edit break an emitting app mid-deploy. The flip side is that a typo in
+an event key looks exactly like success. Nothing errors, no automation runs, and
+you find out when someone notices the emails stopped. Check `registered?` on the
+paths you care about, or watch for the warning the service logs.
+
+`track_event` returns non-2xx as a `Fullsend::Client::EventResult` rather than
+raising, the same as `delete_ses_suppression`. Transport-level failures raise
+`Fullsend::ApiError`; a missing `event_key`/`email` raises `ArgumentError`, and
+an unresolvable `app_id` raises `Fullsend::ConfigurationError`.
+
 ## License
 
 MIT

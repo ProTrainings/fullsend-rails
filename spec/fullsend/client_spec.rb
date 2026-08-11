@@ -89,6 +89,142 @@ RSpec.describe Fullsend::Client do
     end
   end
 
+  describe "#track_event" do
+    let(:stub_response) do
+      double("response", code: "200", body: {
+        event_key: "course.started", registered: true, matched_campaigns: 2,
+        enrolled: 1, signalled: 1, stopped: 0
+      }.to_json)
+    end
+
+    before { Fullsend.configure { |c| c.fullsend_app_id = "3163870b-4658-4d36-8a0d-e5c9d361800f" } }
+
+    def payload
+      JSON.parse(last_request.body)
+    end
+
+    it "POSTs to the events path" do
+      described_class.new.track_event("course.started", email: "joe@gmail.com")
+
+      expect(last_request).to be_a(Net::HTTP::Post)
+      expect(last_request.path).to eq("/v1/events")
+      expect(last_request["Authorization"]).to eq("Bearer test-token")
+      expect(last_request["Content-Type"]).to eq("application/json")
+    end
+
+    it "sends the documented payload shape" do
+      described_class.new.track_event(
+        "course.started",
+        email: "joe@gmail.com",
+        subject_id: "u_12345",
+        properties: { course_id: 2, course_name: "Course Two", user: { first_name: "John", last_name: "Doe" } }
+      )
+
+      expect(payload).to eq(
+        "app_id" => "3163870b-4658-4d36-8a0d-e5c9d361800f",
+        "event_key" => "course.started",
+        "subject_id" => "u_12345",
+        "email" => "joe@gmail.com",
+        "properties" => {
+          "course_id" => 2,
+          "course_name" => "Course Two",
+          "user" => { "first_name" => "John", "last_name" => "Doe" }
+        }
+      )
+    end
+
+    it "defaults app_id to the configured fullsend_app_id" do
+      described_class.new.track_event("course.started", email: "joe@gmail.com")
+
+      expect(payload["app_id"]).to eq("3163870b-4658-4d36-8a0d-e5c9d361800f")
+    end
+
+    it "lets an explicit app_id override the configured one" do
+      described_class.new.track_event("course.started", email: "joe@gmail.com", app_id: "other-app")
+
+      expect(payload["app_id"]).to eq("other-app")
+    end
+
+    # The service treats them as absent either way; omitting keeps the payload
+    # matching the documented shape.
+    it "omits subject_id and properties when not given" do
+      described_class.new.track_event("course.started", email: "joe@gmail.com")
+
+      expect(payload.keys).to contain_exactly("app_id", "event_key", "email")
+    end
+
+    it "omits properties when given an empty hash" do
+      described_class.new.track_event("course.started", email: "joe@gmail.com", properties: {})
+
+      expect(payload).not_to have_key("properties")
+    end
+
+    it "exposes the intake acknowledgement" do
+      result = described_class.new.track_event("course.started", email: "joe@gmail.com")
+
+      expect(result.success?).to be(true)
+      expect(result.registered?).to be(true)
+      expect(result.matched_campaigns).to eq(2)
+      expect(result.enrolled).to eq(1)
+      expect(result.signalled).to eq(1)
+      expect(result.stopped).to eq(0)
+    end
+
+    # An unregistered key is accepted by design so a registry edit cannot break
+    # an emitting app mid-deploy — the caller has to read `registered?` to know.
+    it "reports registered? false for a key not in the registry" do
+      allow(http).to receive(:request).and_return(
+        double("response", code: "200", body: { event_key: "nope", registered: false }.to_json)
+      )
+
+      result = described_class.new.track_event("nope", email: "joe@gmail.com")
+
+      expect(result.success?).to be(true)
+      expect(result.registered?).to be(false)
+      expect(result.matched_campaigns).to eq(0)
+    end
+
+    it "does not raise on a non-2xx" do
+      allow(http).to receive(:request).and_return(double("response", code: "400", body: "\"email is required\""))
+
+      result = described_class.new.track_event("course.started", email: "joe@gmail.com")
+
+      expect(result.success?).to be(false)
+      expect(result.status_code).to eq(400)
+    end
+
+    it "wraps transport-level failures in Fullsend::ApiError" do
+      allow(http).to receive(:request).and_raise(Errno::ECONNREFUSED)
+
+      expect { described_class.new.track_event("course.started", email: "joe@gmail.com") }
+        .to raise_error(Fullsend::ApiError)
+    end
+
+    describe "required fields" do
+      it "raises ConfigurationError when no app_id is configured or given" do
+        Fullsend.configure { |c| c.fullsend_app_id = nil }
+
+        expect { described_class.new.track_event("course.started", email: "joe@gmail.com") }
+          .to raise_error(Fullsend::ConfigurationError, /app_id/)
+      end
+
+      it "raises ArgumentError for a blank event_key" do
+        expect { described_class.new.track_event("  ", email: "joe@gmail.com") }
+          .to raise_error(ArgumentError, /event_key/)
+      end
+
+      it "raises ArgumentError for a blank email" do
+        expect { described_class.new.track_event("course.started", email: nil) }
+          .to raise_error(ArgumentError, /email/)
+      end
+
+      it "does not issue a request when a required field is missing" do
+        expect { described_class.new.track_event("course.started", email: nil) }.to raise_error(ArgumentError)
+        expect(captured).to be_empty
+      end
+    end
+  end
+
   # Minting the token is the host app's job, so a callable is the supported
   # way to hand the gem a token that expires.
   describe "a callable api_token" do

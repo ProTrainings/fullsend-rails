@@ -15,6 +15,7 @@ RSpec.describe Fullsend::Configuration do
     AWS_REGION
     FULLSEND_API_URL
     FULLSEND_API_TOKEN
+    FULLSEND_EVENT_QUEUE
   ].freeze
 
   def stub_env(overrides = {})
@@ -78,6 +79,17 @@ RSpec.describe Fullsend::Configuration do
 
     it "defaults s3_key_prefix to an empty string" do
       expect(described_class.new.s3_key_prefix).to eq("")
+    end
+
+    it "reads event_queue_name from ENV" do
+      stub_env("FULLSEND_EVENT_QUEUE" => "fullsend_events")
+      expect(described_class.new.event_queue_name).to eq("fullsend_events")
+    end
+
+    # nil means Fullsend::EventJob falls back to the :default queue.
+    it "defaults event_queue_name to nil when ENV not set" do
+      stub_env
+      expect(described_class.new.event_queue_name).to be_nil
     end
   end
 
