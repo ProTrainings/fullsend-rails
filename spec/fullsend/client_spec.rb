@@ -225,6 +225,266 @@ RSpec.describe Fullsend::Client do
     end
   end
 
+  describe "#drip_enrollments" do
+    let(:app_id) { "3163870b-4658-4d36-8a0d-e5c9d361800f" }
+
+    let(:rows) do
+      [
+        {
+          id: 91, drip_campaign_id: 4, campaign_id: "trial-nurture",
+          campaign_name: "Trial nurture", app_id: app_id, email: "joe@gmail.com",
+          status: "waiting", active: true, campaign_deleted: false,
+          current_node_id: "branch-1", subject_id: "u_12345",
+          correlation_key: "course:2", context: { course_id: 2 },
+          stop_reason: "", enrolled_at: "2026-08-01T10:00:00Z", version: 3
+        },
+        {
+          id: 42, drip_campaign_id: 7, campaign_id: "onboarding",
+          campaign_name: "Onboarding", app_id: app_id, email: "joe@gmail.com",
+          status: "stopped", active: false, campaign_deleted: true,
+          stop_reason: "conversion", enrolled_at: "2026-07-01T10:00:00Z",
+          stopped_at: "2026-07-09T12:30:00Z"
+        }
+      ]
+    end
+
+    let(:stub_response) { double("response", code: "200", body: { enrollments: rows }.to_json) }
+
+    before { Fullsend.configure { |c| c.fullsend_app_id = app_id } }
+
+    def query
+      URI.decode_www_form(URI.parse(last_request.path).query.to_s).to_h
+    end
+
+    it "GETs the enrollments path with the email as a query param" do
+      described_class.new.drip_enrollments("joe@gmail.com")
+
+      expect(last_request).to be_a(Net::HTTP::Get)
+      expect(URI.parse(last_request.path).path).to eq("/v1/drip-campaigns/enrollments")
+      expect(query).to include("email" => "joe@gmail.com")
+      expect(last_request["Authorization"]).to eq("Bearer test-token")
+    end
+
+    it "url-encodes the address" do
+      described_class.new.drip_enrollments("a+b@example.com")
+
+      expect(last_request.path).to include("email=a%2Bb%40example.com")
+      expect(query["email"]).to eq("a+b@example.com")
+    end
+
+    it "does not send a request body" do
+      described_class.new.drip_enrollments("joe@gmail.com")
+
+      expect(last_request.body).to be_nil
+    end
+
+    describe "app scoping" do
+      it "scopes to the configured fullsend_app_id by default" do
+        described_class.new.drip_enrollments("joe@gmail.com")
+
+        expect(query["app_id"]).to eq(app_id)
+      end
+
+      it "lets an explicit app_id override the configured one" do
+        described_class.new.drip_enrollments("joe@gmail.com", app_id: "other-app")
+
+        expect(query["app_id"]).to eq("other-app")
+      end
+
+      it "omits app_id for ALL_APPS" do
+        described_class.new.drip_enrollments("joe@gmail.com", app_id: Fullsend::Client::ALL_APPS)
+
+        expect(query).not_to have_key("app_id")
+      end
+
+      # The service treats a missing app_id as every app, and there is nothing
+      # to narrow to, so this is not an error the way it is for track_event.
+      it "omits app_id when none is configured or given" do
+        Fullsend.configure { |c| c.fullsend_app_id = nil }
+
+        described_class.new.drip_enrollments("joe@gmail.com")
+
+        expect(query).not_to have_key("app_id")
+      end
+    end
+
+    describe "filters" do
+      it "sends no filters by default, so every state comes back" do
+        described_class.new.drip_enrollments("joe@gmail.com")
+
+        expect(query.keys).to contain_exactly("email", "app_id")
+      end
+
+      it "sends active=true for live runs only" do
+        described_class.new.drip_enrollments("joe@gmail.com", active: true)
+
+        expect(query["active"]).to eq("true")
+      end
+
+      it "sends active=false for finished runs only" do
+        described_class.new.drip_enrollments("joe@gmail.com", active: false)
+
+        expect(query["active"]).to eq("false")
+      end
+
+      it "sends an exact status" do
+        described_class.new.drip_enrollments("joe@gmail.com", status: "completed")
+
+        expect(query["status"]).to eq("completed")
+      end
+
+      it "sends page_size" do
+        described_class.new.drip_enrollments("joe@gmail.com", page_size: 25)
+
+        expect(query["page_size"]).to eq("25")
+      end
+    end
+
+    describe "argument validation" do
+      it "raises ArgumentError for a blank email" do
+        expect { described_class.new.drip_enrollments("  ") }
+          .to raise_error(ArgumentError, /email/)
+      end
+
+      it "raises ArgumentError for an unknown status" do
+        expect { described_class.new.drip_enrollments("joe@gmail.com", status: "paused") }
+          .to raise_error(ArgumentError, /paused/)
+      end
+
+      # The service silently falls back to its default page size past the
+      # maximum, which is worse than being told.
+      it "raises ArgumentError for a page_size over the maximum" do
+        expect { described_class.new.drip_enrollments("joe@gmail.com", page_size: 1_000) }
+          .to raise_error(ArgumentError, /page_size/)
+      end
+
+      it "raises ArgumentError for a non-positive page_size" do
+        expect { described_class.new.drip_enrollments("joe@gmail.com", page_size: 0) }
+          .to raise_error(ArgumentError, /page_size/)
+      end
+
+      it "does not issue a request when an argument is invalid" do
+        expect { described_class.new.drip_enrollments(nil) }.to raise_error(ArgumentError)
+        expect(captured).to be_empty
+      end
+    end
+
+    describe "the result" do
+      subject(:result) { described_class.new.drip_enrollments("joe@gmail.com") }
+
+      it "exposes the rows as Enrollments, newest first as the service ordered them" do
+        expect(result.success?).to be(true)
+        expect(result.size).to eq(2)
+        expect(result.enrollments.map(&:campaign_id)).to eq(%w[trial-nurture onboarding])
+      end
+
+      it "selects the live ones" do
+        expect(result.active.map(&:campaign_id)).to eq(["trial-nurture"])
+        expect(result.active_campaign_names).to eq(["Trial nurture"])
+      end
+
+      # A campaign can hold more than one live run for the same recipient.
+      it "deduplicates active_campaign_names" do
+        rows << rows.first.merge(id: 92, correlation_key: "course:3")
+
+        expect(result.active_campaign_names).to eq(["Trial nurture"])
+      end
+
+      it "answers active_in? by campaign id or numeric id" do
+        expect(result.active_in?("trial-nurture")).to be(true)
+        expect(result.active_in?(4)).to be(true)
+        expect(result.active_in?("onboarding")).to be(false)
+      end
+
+      it "answers enrolled_in? for finished runs too" do
+        expect(result.enrolled_in?("onboarding")).to be(true)
+        expect(result.enrolled_in?(7)).to be(true)
+        expect(result.enrolled_in?("never-enrolled")).to be(false)
+      end
+
+      it "reads an enrollment's fields" do
+        enrollment = result.enrollments.first
+
+        expect(enrollment.id).to eq(91)
+        expect(enrollment.drip_campaign_id).to eq(4)
+        expect(enrollment.campaign_name).to eq("Trial nurture")
+        expect(enrollment.email).to eq("joe@gmail.com")
+        expect(enrollment.app_id).to eq(app_id)
+        expect(enrollment.status).to eq("waiting")
+        expect(enrollment.current_node_id).to eq("branch-1")
+        expect(enrollment.subject_id).to eq("u_12345")
+        expect(enrollment.correlation_key).to eq("course:2")
+        expect(enrollment.context).to eq("course_id" => 2)
+        expect(enrollment.enrolled_at).to eq(Time.utc(2026, 8, 1, 10, 0, 0))
+        expect(enrollment.completed_at).to be_nil
+      end
+
+      # 'waiting' is parked on a branch condition, not finished — the whole
+      # reason to read #active? instead of comparing status to "active".
+      it "treats a waiting enrollment as active" do
+        enrollment = result.enrollments.first
+
+        expect(enrollment.status).to eq("waiting")
+        expect(enrollment.active?).to be(true)
+      end
+
+      it "flags a stopped enrollment and its reason" do
+        enrollment = result.enrollments.last
+
+        expect(enrollment.active?).to be(false)
+        expect(enrollment.stop_reason).to eq("conversion")
+        expect(enrollment.stopped_at).to eq(Time.utc(2026, 7, 9, 12, 30, 0))
+      end
+
+      # Kept because the row is real history: the person genuinely was enrolled.
+      it "flags an enrollment whose campaign was since deleted" do
+        expect(result.enrollments.last.campaign_deleted?).to be(true)
+        expect(result.enrollments.first.campaign_deleted?).to be(false)
+      end
+
+      it "reaches unmapped fields through #[] and #to_h" do
+        enrollment = result.enrollments.first
+
+        expect(enrollment[:version]).to eq(3)
+        expect(enrollment.to_h).to include("version" => 3)
+      end
+
+      it "falls back to the live-status rule when the derived active flag is absent" do
+        rows.first.delete(:active)
+
+        expect(result.enrollments.first.active?).to be(true)
+      end
+    end
+
+    it "returns an empty result for a recipient in nothing" do
+      allow(http).to receive(:request).and_return(double("response", code: "200", body: { enrollments: [] }.to_json))
+
+      result = described_class.new.drip_enrollments("nobody@gmail.com")
+
+      expect(result.success?).to be(true)
+      expect(result.empty?).to be(true)
+      expect(result.any?).to be(false)
+      expect(result.active_campaign_names).to eq([])
+    end
+
+    it "does not raise on a non-2xx, and reads as empty" do
+      allow(http).to receive(:request).and_return(double("response", code: "400", body: "\"email is required\""))
+
+      result = described_class.new.drip_enrollments("joe@gmail.com")
+
+      expect(result.success?).to be(false)
+      expect(result.status_code).to eq(400)
+      expect(result.enrollments).to eq([])
+    end
+
+    it "wraps transport-level failures in Fullsend::ApiError" do
+      allow(http).to receive(:request).and_raise(Errno::ECONNREFUSED)
+
+      expect { described_class.new.drip_enrollments("joe@gmail.com") }
+        .to raise_error(Fullsend::ApiError)
+    end
+  end
+
   # Minting the token is the host app's job, so a callable is the supported
   # way to hand the gem a token that expires.
   describe "a callable api_token" do

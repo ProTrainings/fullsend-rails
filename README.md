@@ -432,6 +432,94 @@ raising, the same as `delete_ses_suppression`. Transport-level failures raise
 `Fullsend::ApiError`; a missing `event_key`/`email` raises `ArgumentError`, and
 an unresolvable `app_id` raises `Fullsend::ConfigurationError`.
 
+## Which Automations Is Someone In?
+
+Events go one way — your app reports facts and never learns what came of them.
+`drip_enrollments` reads the other direction: one call returns every campaign an
+address is or was enrolled in, so a support screen, an admin page, or a
+"don't enroll them twice" guard doesn't need a request per campaign.
+
+```ruby
+result = Fullsend.drip_enrollments(user.email)
+
+result.active_campaign_names       # => ["Trial nurture"]
+result.active_in?("trial-nurture") # => true  (still in it)
+result.enrolled_in?("onboarding")  # => true  (history counts)
+```
+
+Uses the same `api_base_url` / `api_token` as the HTTP API Client above, and
+issues `GET /v1/drip-campaigns/enrollments`.
+
+### `active` is derived, not a status
+
+An enrollment is live while its status is **`active` OR `waiting`**. A `waiting`
+run is merely parked on a branch condition — waiting on an open, a click, a
+signal — and is still very much enrolled. So ask `active?`, not
+`status == "active"`, or you'll silently miss every parked run:
+
+```ruby
+result.active                                  # right
+result.enrollments.select { |e| e.status == "active" }  # wrong — omits 'waiting'
+```
+
+The four statuses are `active`, `waiting`, `completed`, `stopped`.
+
+### Rows
+
+`result.enrollments` is newest-enrollment-first, and each row carries its
+campaign's name and id so you can label it without a lookup:
+
+```ruby
+result.enrollments.each do |enrollment|
+  enrollment.campaign_name     # "Trial nurture"
+  enrollment.campaign_id       # "trial-nurture" — the campaign's own id
+  enrollment.drip_campaign_id  # 4 — the numeric id, for /v1/drip-campaigns/:id
+  enrollment.status            # "waiting"
+  enrollment.active?           # true
+  enrollment.stop_reason       # "conversion" | "manual" | "bounce" | ...
+  enrollment.subject_id        # your app's id for the person, if sent
+  enrollment.correlation_key   # scopes concurrent runs, e.g. "course:2"
+  enrollment.context           # the event `properties` the run carries
+  enrollment.enrolled_at       # Time
+  enrollment.campaign_deleted? # campaign was since deleted — see below
+end
+```
+
+`enrollment[:any_field]` and `enrollment.to_h` reach anything not given a reader.
+
+An enrollment whose campaign has since been deleted is still returned, flagged
+with `campaign_deleted?`. The row is real history — the person genuinely was
+enrolled — so filter it out yourself if you're rendering current state.
+
+### Filters
+
+```ruby
+Fullsend.drip_enrollments(email, active: true)          # live runs only
+Fullsend.drip_enrollments(email, active: false)         # finished runs only
+Fullsend.drip_enrollments(email, status: "stopped")     # one exact status
+Fullsend.drip_enrollments(email, page_size: 25)         # default 100, max 500
+```
+
+Omitting `active` returns every state. `active:` and `status:` are independent —
+`active` is the coarse live/finished split, `status` an exact match for drilling
+into one state.
+
+The lookup is scoped to the configured `fullsend_app_id`, which is what an app
+asking about its own recipients wants. Pass another id, or
+`Fullsend::Client::ALL_APPS` for every app your token can see:
+
+```ruby
+Fullsend.drip_enrollments(email, app_id: Fullsend::Client::ALL_APPS)
+```
+
+The address is matched exactly as stored, so pass the same address you enrolled.
+
+Returns a `Fullsend::Client::DripEnrollmentsResult` (a `Response`, so
+`#success?`/`#status_code`/`#data` are there too) and does not raise on a non-2xx
+— where `#enrollments` reads as empty, so check `#success?` when an empty list
+and a failed call need telling apart. A blank `email`, an unknown `status`, or a
+`page_size` outside 1..500 raises `ArgumentError` before any request goes out.
+
 ## License
 
 MIT
