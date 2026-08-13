@@ -2,6 +2,7 @@ require "net/http"
 require "uri"
 require "json"
 require "erb"
+require "time"
 
 module Fullsend
   # HTTP client for the Fullsend service API. Distinct from the SQS-based
@@ -21,6 +22,7 @@ module Fullsend
   #
   #   Fullsend::Client.new.delete_ses_suppression("user@example.com")
   #   Fullsend::Client.new.track_event("course.started", email: "joe@example.com")
+  #   Fullsend::Client.new.drip_enrollments("joe@example.com")
   #
   # Methods return a Fullsend::Client::Response. Transport-level failures
   # (timeouts, connection errors) raise Fullsend::ApiError.
@@ -28,6 +30,20 @@ module Fullsend
     BEARER_PREFIX = "Bearer".freeze
     SES_SUPPRESSIONS_PATH = "v1/ses-suppressions".freeze
     EVENTS_PATH = "v1/events".freeze
+    DRIP_ENROLLMENTS_PATH = "v1/drip-campaigns/enrollments".freeze
+
+    # Enrollment statuses the service recognizes. Checked before the request so
+    # a typo names itself here rather than coming back as an opaque 400.
+    DRIP_STATUSES = %w[active waiting completed stopped].freeze
+
+    # Pass as `app_id:` to search every app the token can see instead of the
+    # configured one. Only useful for an admin or support tool — an app asking
+    # about its own recipients wants the default scoping.
+    ALL_APPS = :all
+
+    # The service falls back to its default page size (silently) when asked for
+    # more than its maximum, so the bound is enforced here instead.
+    DRIP_MAX_PAGE_SIZE = 500
 
     DEFAULT_OPEN_TIMEOUT = 2
     DEFAULT_READ_TIMEOUT = 5
@@ -116,6 +132,195 @@ module Fullsend
       end
     end
 
+    # One row from #drip_enrollments: a recipient's enrollment in a campaign,
+    # carrying the campaign's name and id so naming it takes no second call.
+    #
+    # Readers cover the fields worth asking about; #[] and #to_h reach anything
+    # else the service returns.
+    class Enrollment
+      # An enrollment is still live while it is active OR waiting: a 'waiting'
+      # run is merely parked on a branch condition and is still enrolled. The
+      # service derives `active` with this same rule; this constant only backs
+      # the fallback in #active? for a response that predates the field.
+      LIVE_STATUSES = %w[active waiting].freeze
+
+      attr_reader :attributes
+
+      def initialize(attributes)
+        @attributes = attributes.is_a?(Hash) ? attributes : {}
+      end
+
+      def id
+        attributes["id"]
+      end
+
+      def email
+        attributes["email"].to_s
+      end
+
+      def app_id
+        attributes["app_id"].to_s
+      end
+
+      # The campaign's own string identifier (its tag), which is what a
+      # campaign is referred to by outside the service.
+      def campaign_id
+        attributes["campaign_id"].to_s
+      end
+
+      # The campaign's numeric primary key, as used in /v1/drip-campaigns/:id.
+      def drip_campaign_id
+        attributes["drip_campaign_id"]
+      end
+
+      def campaign_name
+        attributes["campaign_name"].to_s
+      end
+
+      # active | waiting | completed | stopped. Prefer #active? over comparing
+      # this to "active" — see LIVE_STATUSES.
+      def status
+        attributes["status"].to_s
+      end
+
+      def active?
+        return attributes["active"] == true if attributes.key?("active")
+
+        LIVE_STATUSES.include?(status)
+      end
+
+      # True when the campaign has since been soft-deleted. Such enrollments are
+      # still returned — the row is real history, the person was enrolled.
+      def campaign_deleted?
+        attributes["campaign_deleted"] == true
+      end
+
+      # Why a stopped enrollment stopped (e.g. "conversion", "manual",
+      # "bounce"). Empty for enrollments that were not stopped.
+      def stop_reason
+        attributes["stop_reason"].to_s
+      end
+
+      # The emitting app's own id for the person, when the event that enrolled
+      # them carried one.
+      def subject_id
+        attributes["subject_id"].to_s
+      end
+
+      # Scopes concurrent runs of the same campaign for one recipient (e.g. one
+      # run per course).
+      def correlation_key
+        attributes["correlation_key"].to_s
+      end
+
+      # The run's data payload — the event `properties` it was enrolled with.
+      def context
+        value = attributes["context"]
+        value.is_a?(Hash) ? value : {}
+      end
+
+      def current_node_id
+        attributes["current_node_id"].to_s
+      end
+
+      def enrolled_at
+        time("enrolled_at")
+      end
+
+      def completed_at
+        time("completed_at")
+      end
+
+      def stopped_at
+        time("stopped_at")
+      end
+
+      def [](key)
+        attributes[key.to_s]
+      end
+
+      def to_h
+        attributes
+      end
+
+      private
+
+      def time(key)
+        raw = attributes[key]
+        return nil if raw.nil? || raw.to_s.empty?
+
+        Time.parse(raw.to_s)
+      rescue ArgumentError
+        nil
+      end
+    end
+
+    # The answer to "which campaigns is this address in". Rows come back newest
+    # enrollment first, in every state unless the call filtered them.
+    class DripEnrollmentsResult < Response
+      def self.from(response)
+        new(response.status_code, response.body)
+      end
+
+      # Array<Enrollment>. Empty for a non-2xx, so check #success? first when
+      # an empty list and a failed call need telling apart.
+      def enrollments
+        return @enrollments if defined?(@enrollments)
+
+        rows = result["enrollments"]
+        @enrollments = (rows.is_a?(Array) ? rows : []).map { |row| Enrollment.new(row) }
+      end
+
+      # Just the live ones (active or waiting) — the usual question.
+      def active
+        enrollments.select(&:active?)
+      end
+
+      # Is the recipient currently in this campaign? Takes either the campaign's
+      # string id (its tag) or its numeric id.
+      def active_in?(campaign)
+        active.any? { |enrollment| matches?(enrollment, campaign) }
+      end
+
+      # Have they ever been in it, finished and stopped runs included?
+      def enrolled_in?(campaign)
+        enrollments.any? { |enrollment| matches?(enrollment, campaign) }
+      end
+
+      # Names of the campaigns they are currently in, for a support screen or a
+      # log line. Deduplicated: a campaign can hold more than one live run.
+      def active_campaign_names
+        active.map(&:campaign_name).uniq
+      end
+
+      def size
+        enrollments.size
+      end
+
+      def any?
+        !enrollments.empty?
+      end
+
+      def empty?
+        enrollments.empty?
+      end
+
+      private
+
+      def matches?(enrollment, campaign)
+        return enrollment.drip_campaign_id == campaign if campaign.is_a?(Integer)
+
+        enrollment.campaign_id == campaign.to_s
+      end
+
+      def result
+        return @result if defined?(@result)
+
+        parsed = data
+        @result = parsed.is_a?(Hash) ? parsed : {}
+      end
+    end
+
     def initialize(configuration = Fullsend.configuration)
       @configuration = configuration
     end
@@ -156,7 +361,85 @@ module Fullsend
       )
     end
 
+    # GET /v1/drip-campaigns/enrollments
+    #
+    # Which automations is this address enrolled in? One call covers every
+    # campaign and every state, so a support screen or a guard ("don't enroll
+    # them twice") does not need a request per campaign.
+    #
+    #   result = Fullsend::Client.new.drip_enrollments("joe@example.com")
+    #   result.active_campaign_names        # => ["Trial nurture"]
+    #   result.active_in?("trial-nurture")  # => true
+    #
+    # By default only the configured `fullsend_app_id` is searched; pass
+    # `app_id: Fullsend::Client::ALL_APPS` for every app the token can see, or
+    # an explicit id for another one. When no app_id is configured or given the
+    # search is not app-scoped.
+    #
+    # Filters:
+    #   active:    true  => live runs only (status active OR waiting)
+    #              false => finished runs only (completed/stopped)
+    #              nil   => every state (the default)
+    #   status:    one exact status, for drilling into a single state. Prefer
+    #              `active: true` for "still enrolled" — `status: "active"`
+    #              omits every run parked on a branch condition.
+    #   page_size: newest-first cap, default 100, max DRIP_MAX_PAGE_SIZE.
+    #
+    # The address is matched exactly, as stored. Returns a
+    # DripEnrollmentsResult; a non-2xx does not raise.
+    def drip_enrollments(email, app_id: nil, active: nil, status: nil, page_size: nil)
+      DripEnrollmentsResult.from(
+        request(:get, DRIP_ENROLLMENTS_PATH, query: drip_enrollments_query(email, app_id, active, status, page_size))
+      )
+    end
+
     private
+
+    # Validated here so a bad filter fails at the call site with the offending
+    # field named, rather than as an opaque 400 — or, for an oversized
+    # page_size, as a silently smaller page.
+    def drip_enrollments_query(email, app_id, active, status, page_size)
+      raise ArgumentError, "email is required to look up drip enrollments" if blank?(email)
+
+      query = { email: email.to_s }
+
+      resolved_app_id = resolve_drip_app_id(app_id)
+      query[:app_id] = resolved_app_id.to_s unless resolved_app_id.nil?
+
+      unless active.nil?
+        query[:active] = active ? "true" : "false"
+      end
+
+      unless blank?(status)
+        unless DRIP_STATUSES.include?(status.to_s)
+          raise ArgumentError, "unknown drip enrollment status #{status.inspect}. One of: #{DRIP_STATUSES.join(", ")}"
+        end
+
+        query[:status] = status.to_s
+      end
+
+      unless page_size.nil?
+        size = page_size.to_i
+        unless (1..DRIP_MAX_PAGE_SIZE).cover?(size)
+          raise ArgumentError, "page_size must be between 1 and #{DRIP_MAX_PAGE_SIZE}, got #{page_size.inspect}"
+        end
+
+        query[:page_size] = size
+      end
+
+      query
+    end
+
+    # nil means "the app this gem is configured for", which is what a host app
+    # asking about its own recipients wants. ALL_APPS opts out of the scoping;
+    # so does having no fullsend_app_id configured, since the service treats a
+    # missing app_id as "every app" and there is nothing to narrow to.
+    def resolve_drip_app_id(app_id)
+      return nil if app_id == ALL_APPS
+
+      candidate = blank?(app_id) ? @configuration.fullsend_app_id : app_id
+      blank?(candidate) ? nil : candidate
+    end
 
     # Mirrors the service's own required fields. Checked here so a missing
     # value fails at the call site with the offending field named, rather
@@ -180,11 +463,11 @@ module Fullsend
       value.nil? || value.to_s.strip.empty?
     end
 
-    def request(method, path, body: nil)
+    def request(method, path, body: nil, query: nil)
       @configuration.validate_api!
 
       payload = encode_body(body)
-      uri = build_uri(path)
+      uri = build_uri(path, query)
       req = REQUEST_CLASSES.fetch(method).new(uri)
       req["Content-Type"] = "application/json"
       req["Authorization"] = authorization
@@ -217,9 +500,11 @@ module Fullsend
       "#{BEARER_PREFIX} #{token}"
     end
 
-    def build_uri(path)
+    def build_uri(path, query = nil)
       base = @configuration.resolve_api_base_url.to_s.sub(%r{/+\z}, "")
-      URI.parse("#{base}/#{path}")
+      uri = URI.parse("#{base}/#{path}")
+      uri.query = URI.encode_www_form(query) unless query.nil? || query.empty?
+      uri
     end
 
     def connection(uri)

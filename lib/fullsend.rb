@@ -34,6 +34,16 @@ module Fullsend
       EventJob.perform_later(event_key, **options)
     end
 
+    # Which automations is this address enrolled in?
+    #
+    #   Fullsend.drip_enrollments(user.email).active_campaign_names
+    #
+    # Scoped to the configured fullsend_app_id by default. Returns a
+    # Fullsend::Client::DripEnrollmentsResult. See Client#drip_enrollments.
+    def drip_enrollments(email, **options)
+      Client.new.drip_enrollments(email, **options)
+    end
+
     def configure
       yield(configuration)
     end
