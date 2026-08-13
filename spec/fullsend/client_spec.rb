@@ -485,6 +485,317 @@ RSpec.describe Fullsend::Client do
     end
   end
 
+  describe "#create_unsubscribe" do
+    let(:app_id) { "3163870b-4658-4d36-8a0d-e5c9d361800f" }
+
+    let(:row) do
+      {
+        id: 17, email: "joe@gmail.com", app_id: app_id, campaign_id: "trial-nurture",
+        scope: "campaign", reason: "manual", created_at: "2026-08-12T09:00:00Z"
+      }
+    end
+
+    let(:stub_response) { double("response", code: "200", body: row.to_json) }
+
+    before { Fullsend.configure { |c| c.fullsend_app_id = app_id } }
+
+    def body
+      JSON.parse(last_request.body)
+    end
+
+    it "POSTs the unsubscribes path" do
+      described_class.new.create_unsubscribe("joe@gmail.com", scope: "campaign", campaign_id: "trial-nurture")
+
+      expect(last_request).to be_a(Net::HTTP::Post)
+      expect(last_request.path).to eq("/v1/unsubscribes")
+      expect(last_request["Authorization"]).to eq("Bearer test-token")
+    end
+
+    it "sends the email, resolved app_id, scope and campaign_id" do
+      described_class.new.create_unsubscribe("joe@gmail.com", scope: "campaign", campaign_id: "trial-nurture")
+
+      expect(body).to eq(
+        "email" => "joe@gmail.com", "app_id" => app_id,
+        "scope" => "campaign", "campaign_id" => "trial-nurture"
+      )
+    end
+
+    it "omits campaign_id for an app-wide opt-out" do
+      described_class.new.create_unsubscribe("joe@gmail.com", scope: Fullsend::Client::SCOPE_APP)
+
+      expect(body).not_to have_key("campaign_id")
+      expect(body["scope"]).to eq("app")
+    end
+
+    # The service defaults a missing reason to "manual"; the gem does not send
+    # one so that default stays in one place.
+    it "omits reason unless given, and sends it when given" do
+      client = described_class.new
+      client.create_unsubscribe("joe@gmail.com", scope: "app")
+      expect(body).not_to have_key("reason")
+
+      client.create_unsubscribe("joe@gmail.com", scope: "app", reason: Fullsend::Client::REASON_ONE_CLICK)
+      expect(body["reason"]).to eq("one_click")
+    end
+
+    it "lets an explicit app_id override the configured one" do
+      described_class.new.create_unsubscribe("joe@gmail.com", scope: "app", app_id: "other-app")
+
+      expect(body["app_id"]).to eq("other-app")
+    end
+
+    describe "argument validation" do
+      it "raises ArgumentError for a blank email" do
+        expect { described_class.new.create_unsubscribe("  ", scope: "app") }
+          .to raise_error(ArgumentError, /email/)
+      end
+
+      it "requires scope to be named" do
+        expect { described_class.new.create_unsubscribe("joe@gmail.com") }
+          .to raise_error(ArgumentError, /scope/)
+      end
+
+      it "raises ArgumentError for an unknown scope" do
+        expect { described_class.new.create_unsubscribe("joe@gmail.com", scope: "everything") }
+          .to raise_error(ArgumentError, /unknown unsubscribe scope/)
+      end
+
+      # The service would default the scope to app-wide here. Opting someone out
+      # of every campaign because a keyword was forgotten is the failure this
+      # guard exists for.
+      it "raises ArgumentError for campaign scope without a campaign_id" do
+        expect { described_class.new.create_unsubscribe("joe@gmail.com", scope: "campaign") }
+          .to raise_error(ArgumentError, /campaign_id is required/)
+      end
+
+      it "raises ArgumentError for an unknown reason" do
+        expect { described_class.new.create_unsubscribe("joe@gmail.com", scope: "app", reason: "bored") }
+          .to raise_error(ArgumentError, /unknown unsubscribe reason/)
+      end
+
+      it "raises ConfigurationError when no app_id is configured or given" do
+        Fullsend.configure { |c| c.fullsend_app_id = nil }
+
+        expect { described_class.new.create_unsubscribe("joe@gmail.com", scope: "app") }
+          .to raise_error(Fullsend::ConfigurationError, /app_id/)
+      end
+
+      it "makes no request when validation fails" do
+        expect { described_class.new.create_unsubscribe("joe@gmail.com", scope: "campaign") }
+          .to raise_error(ArgumentError)
+
+        expect(captured).to be_empty
+      end
+    end
+
+    describe "the stored record" do
+      subject(:result) do
+        described_class.new.create_unsubscribe("joe@gmail.com", scope: "campaign", campaign_id: "trial-nurture")
+      end
+
+      it "reads back the row the service stored" do
+        expect(result.success?).to be(true)
+        expect(result.id).to eq(17)
+        expect(result.email).to eq("joe@gmail.com")
+        expect(result.app_id).to eq(app_id)
+        expect(result.campaign_id).to eq("trial-nurture")
+        expect(result.scope).to eq("campaign")
+        expect(result.reason).to eq("manual")
+        expect(result.created_at).to eq(Time.parse("2026-08-12T09:00:00Z"))
+      end
+
+      it "reports campaign scope as not app-wide" do
+        expect(result.app_wide?).to be(false)
+      end
+
+      it "reports app scope as app-wide" do
+        allow(http).to receive(:request)
+          .and_return(double("response", code: "200", body: row.merge(scope: "app").to_json))
+
+        expect(described_class.new.create_unsubscribe("joe@gmail.com", scope: "app").app_wide?).to be(true)
+      end
+    end
+
+    it "does not raise on a non-2xx" do
+      allow(http).to receive(:request).and_return(double("response", code: "400", body: "\"unknown app_id\""))
+
+      result = described_class.new.create_unsubscribe("joe@gmail.com", scope: "app")
+
+      expect(result.success?).to be(false)
+      expect(result.status_code).to eq(400)
+      expect(result.id).to be_nil
+    end
+
+    it "wraps transport-level failures in Fullsend::ApiError" do
+      allow(http).to receive(:request).and_raise(Errno::ECONNREFUSED)
+
+      expect { described_class.new.create_unsubscribe("joe@gmail.com", scope: "app") }
+        .to raise_error(Fullsend::ApiError)
+    end
+  end
+
+  describe "#unsubscribes" do
+    let(:app_id) { "3163870b-4658-4d36-8a0d-e5c9d361800f" }
+
+    let(:rows) do
+      [
+        {
+          id: 17, email: "joe@gmail.com", app_id: app_id, campaign_id: "trial-nurture",
+          scope: "campaign", reason: "manual", created_at: "2026-08-12T09:00:00Z"
+        },
+        {
+          id: 18, email: "joe@gmail.com", app_id: app_id, campaign_id: "onboarding",
+          scope: "campaign", reason: "link_click", created_at: "2026-08-11T09:00:00Z"
+        }
+      ]
+    end
+
+    let(:stub_response) { double("response", code: "200", body: { unsubscribes: rows }.to_json) }
+
+    before { Fullsend.configure { |c| c.fullsend_app_id = app_id } }
+
+    def query
+      URI.decode_www_form(URI.parse(last_request.path).query.to_s).to_h
+    end
+
+    it "GETs the unsubscribes path scoped to the email and configured app" do
+      described_class.new.unsubscribes("joe@gmail.com")
+
+      expect(last_request).to be_a(Net::HTTP::Get)
+      expect(URI.parse(last_request.path).path).to eq("/v1/unsubscribes")
+      expect(query).to eq("email" => "joe@gmail.com", "app_id" => app_id)
+    end
+
+    it "omits app_id for ALL_APPS" do
+      described_class.new.unsubscribes("joe@gmail.com", app_id: Fullsend::Client::ALL_APPS)
+
+      expect(query).not_to have_key("app_id")
+    end
+
+    it "sends a scope filter and page_size when given" do
+      described_class.new.unsubscribes("joe@gmail.com", scope: "app", page_size: 25)
+
+      expect(query["scope"]).to eq("app")
+      expect(query["page_size"]).to eq("25")
+    end
+
+    it "raises ArgumentError for an unknown scope" do
+      expect { described_class.new.unsubscribes("joe@gmail.com", scope: "everything") }
+        .to raise_error(ArgumentError, /unknown unsubscribe scope/)
+    end
+
+    it "raises ArgumentError for an out-of-range page_size" do
+      expect { described_class.new.unsubscribes("joe@gmail.com", page_size: 0) }
+        .to raise_error(ArgumentError, /page_size/)
+    end
+
+    describe "reading the rows" do
+      subject(:result) { described_class.new.unsubscribes("joe@gmail.com") }
+
+      it "maps each row" do
+        expect(result.size).to eq(2)
+        expect(result.unsubscribes.first.id).to eq(17)
+        expect(result.unsubscribes.first.campaign_id).to eq("trial-nurture")
+        expect(result.unsubscribes.first.reason).to eq("manual")
+        expect(result.unsubscribes.first.created_at).to eq(Time.parse("2026-08-12T09:00:00Z"))
+      end
+
+      it "lists the campaign tags that are opted out" do
+        expect(result.campaign_ids).to contain_exactly("trial-nurture", "onboarding")
+      end
+
+      it "finds a campaign's row so it can be removed by id" do
+        expect(result.for_campaign("onboarding").id).to eq(18)
+        expect(result.for_campaign("never-enrolled")).to be_nil
+      end
+
+      it "reports campaign-scoped suppression" do
+        expect(result.suppressed?("trial-nurture")).to be(true)
+        expect(result.suppressed?("weekly-tips")).to be(false)
+      end
+
+      it "is not app-wide with only campaign rows" do
+        expect(result.app_wide?).to be(false)
+        expect(result.app_wide).to be_nil
+      end
+    end
+
+    describe "an app-wide opt-out" do
+      let(:rows) do
+        [{ id: 99, email: "joe@gmail.com", app_id: app_id, campaign_id: "", scope: "app", reason: "one_click" }]
+      end
+
+      subject(:result) { described_class.new.unsubscribes("joe@gmail.com") }
+
+      it "reports app-wide and exposes the row for re-subscribing" do
+        expect(result.app_wide?).to be(true)
+        expect(result.app_wide.id).to eq(99)
+      end
+
+      # Matches the service's own rule: an app-scoped row suppresses every
+      # campaign, whether or not a campaign row exists for it.
+      it "suppresses every campaign" do
+        expect(result.suppressed?("anything-at-all")).to be(true)
+      end
+
+      it "keeps app-wide rows out of campaign_ids" do
+        expect(result.campaign_ids).to eq([])
+      end
+    end
+
+    it "returns an empty result for an address with no opt-outs" do
+      allow(http).to receive(:request).and_return(double("response", code: "200", body: { unsubscribes: [] }.to_json))
+
+      result = described_class.new.unsubscribes("nobody@gmail.com")
+
+      expect(result.success?).to be(true)
+      expect(result.empty?).to be(true)
+      expect(result.app_wide?).to be(false)
+      expect(result.suppressed?("anything")).to be(false)
+    end
+
+    it "does not raise on a non-2xx, and reads as empty" do
+      allow(http).to receive(:request).and_return(double("response", code: "500", body: "\"boom\""))
+
+      result = described_class.new.unsubscribes("joe@gmail.com")
+
+      expect(result.success?).to be(false)
+      expect(result.unsubscribes).to eq([])
+    end
+
+    it "wraps transport-level failures in Fullsend::ApiError" do
+      allow(http).to receive(:request).and_raise(Errno::ECONNREFUSED)
+
+      expect { described_class.new.unsubscribes("joe@gmail.com") }
+        .to raise_error(Fullsend::ApiError)
+    end
+  end
+
+  describe "#delete_unsubscribe" do
+    let(:stub_response) { double("response", code: "200", body: "") }
+
+    it "DELETEs the row path" do
+      described_class.new.delete_unsubscribe(17)
+
+      expect(last_request).to be_a(Net::HTTP::Delete)
+      expect(last_request.path).to eq("/v1/unsubscribes/17")
+      expect(last_request["Authorization"]).to eq("Bearer test-token")
+    end
+
+    it "raises ArgumentError for a blank id" do
+      expect { described_class.new.delete_unsubscribe(nil) }
+        .to raise_error(ArgumentError, /id/)
+
+      expect(captured).to be_empty
+    end
+
+    it "does not raise on a non-2xx" do
+      allow(http).to receive(:request).and_return(double("response", code: "404", body: ""))
+
+      expect(described_class.new.delete_unsubscribe(17).not_found?).to be(true)
+    end
+  end
+
   # Minting the token is the host app's job, so a callable is the supported
   # way to hand the gem a token that expires.
   describe "a callable api_token" do
