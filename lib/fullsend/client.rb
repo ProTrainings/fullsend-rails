@@ -31,6 +31,21 @@ module Fullsend
     SES_SUPPRESSIONS_PATH = "v1/ses-suppressions".freeze
     EVENTS_PATH = "v1/events".freeze
     DRIP_ENROLLMENTS_PATH = "v1/drip-campaigns/enrollments".freeze
+    UNSUBSCRIBES_PATH = "v1/unsubscribes".freeze
+
+    # How wide an opt-out reaches. SCOPE_CAMPAIGN silences one automation and
+    # leaves the rest; SCOPE_APP is "stop emailing me from this app at all".
+    SCOPE_CAMPAIGN = "campaign".freeze
+    SCOPE_APP = "app".freeze
+    UNSUBSCRIBE_SCOPES = [SCOPE_CAMPAIGN, SCOPE_APP].freeze
+
+    # How the opt-out was collected, which is what a compliance question asks
+    # about later. ONE_CLICK is an RFC 8058 List-Unsubscribe POST, LINK_CLICK a
+    # footer link, MANUAL a preferences page or a support agent.
+    REASON_ONE_CLICK = "one_click".freeze
+    REASON_LINK_CLICK = "link_click".freeze
+    REASON_MANUAL = "manual".freeze
+    UNSUBSCRIBE_REASONS = [REASON_ONE_CLICK, REASON_LINK_CLICK, REASON_MANUAL].freeze
 
     # Enrollment statuses the service recognizes. Checked before the request so
     # a typo names itself here rather than coming back as an opaque 400.
@@ -321,6 +336,195 @@ module Fullsend
       end
     end
 
+    # One opt-out row. Unlike stopping an enrollment — which ends the runs
+    # already open and nothing more — this row is what keeps the address out of
+    # the *next* enrollment too, and the service also re-checks it at send time,
+    # so it silences the runs already in flight. It is what an unsubscribe
+    # actually is.
+    class Unsubscribe
+      attr_reader :attributes
+
+      def initialize(attributes)
+        @attributes = attributes.is_a?(Hash) ? attributes : {}
+      end
+
+      # The row id — what DELETE /v1/unsubscribes/:id takes to re-subscribe.
+      def id
+        attributes["id"]
+      end
+
+      def email
+        attributes["email"].to_s
+      end
+
+      def app_id
+        attributes["app_id"].to_s
+      end
+
+      # The campaign's string id (its tag). Empty for an app-scoped opt-out.
+      def campaign_id
+        attributes["campaign_id"].to_s
+      end
+
+      # "campaign" | "app". Comes back resolved, so this is the scope that was
+      # actually stored rather than the one asked for.
+      def scope
+        attributes["scope"].to_s
+      end
+
+      def reason
+        attributes["reason"].to_s
+      end
+
+      # True for "stop emailing me from this app at all". An app-wide row
+      # suppresses every campaign, so it outranks any campaign-scoped row.
+      def app_wide?
+        scope == SCOPE_APP
+      end
+
+      def created_at
+        raw = attributes["created_at"]
+        return nil if raw.nil? || raw.to_s.empty?
+
+        Time.parse(raw.to_s)
+      rescue ArgumentError
+        nil
+      end
+
+      def [](key)
+        attributes[key.to_s]
+      end
+
+      def to_h
+        attributes
+      end
+    end
+
+    # The opt-out record the service stored, echoed back. Readers are delegated
+    # to the Unsubscribe row so a created record and a listed one read alike.
+    class UnsubscribeResult < Response
+      def self.from(response)
+        new(response.status_code, response.body)
+      end
+
+      # The stored row. Readers below cover it; reach #attributes for anything
+      # the service returns that has no reader.
+      def unsubscribe
+        return @unsubscribe if defined?(@unsubscribe)
+
+        parsed = data
+        @unsubscribe = Unsubscribe.new(parsed.is_a?(Hash) ? parsed : {})
+      end
+
+      def id
+        unsubscribe.id
+      end
+
+      def email
+        unsubscribe.email
+      end
+
+      def app_id
+        unsubscribe.app_id
+      end
+
+      def campaign_id
+        unsubscribe.campaign_id
+      end
+
+      def scope
+        unsubscribe.scope
+      end
+
+      def reason
+        unsubscribe.reason
+      end
+
+      def app_wide?
+        unsubscribe.app_wide?
+      end
+
+      def created_at
+        unsubscribe.created_at
+      end
+    end
+
+    # Which opt-outs are on file for an address — what a preferences page needs
+    # to render current state, since an enrollment stays live (merely silenced)
+    # after someone opts out and so still comes back from #drip_enrollments.
+    class UnsubscribesResult < Response
+      def self.from(response)
+        new(response.status_code, response.body)
+      end
+
+      # Array<Unsubscribe>. Empty for a non-2xx, so check #success? when an
+      # empty list and a failed call need telling apart.
+      def unsubscribes
+        return @unsubscribes if defined?(@unsubscribes)
+
+        rows = result["unsubscribes"]
+        @unsubscribes = (rows.is_a?(Array) ? rows : []).map { |row| Unsubscribe.new(row) }
+      end
+
+      # Opaque cursor for the next page, when the service returned one.
+      def next_token
+        result["next_token"].to_s
+      end
+
+      # True when an app-wide opt-out is on file — "stop emailing me at all",
+      # which suppresses every campaign regardless of campaign-scoped rows.
+      def app_wide?
+        unsubscribes.any?(&:app_wide?)
+      end
+
+      # The app-wide row itself, for re-subscribing (its id is what DELETE
+      # takes). Nil when there is none.
+      def app_wide
+        unsubscribes.detect(&:app_wide?)
+      end
+
+      # Campaign tags with a campaign-scoped opt-out. Deliberately does *not*
+      # fold in an app-wide row: those are different states a preferences page
+      # renders differently, and #suppressed? is the question that merges them.
+      def campaign_ids
+        unsubscribes.reject(&:app_wide?).map(&:campaign_id).uniq
+      end
+
+      # The campaign-scoped row for a tag, or nil. Its id is what re-subscribing
+      # takes.
+      def for_campaign(campaign_id)
+        unsubscribes.detect { |row| !row.app_wide? && row.campaign_id == campaign_id.to_s }
+      end
+
+      # Would the service refuse to send this campaign to them? Matches the
+      # service's own rule: an app-wide opt-out, or a campaign-scoped one for
+      # this tag.
+      def suppressed?(campaign_id)
+        app_wide? || !for_campaign(campaign_id).nil?
+      end
+
+      def size
+        unsubscribes.size
+      end
+
+      def any?
+        !unsubscribes.empty?
+      end
+
+      def empty?
+        unsubscribes.empty?
+      end
+
+      private
+
+      def result
+        return @result if defined?(@result)
+
+        parsed = data
+        @result = parsed.is_a?(Hash) ? parsed : {}
+      end
+    end
+
     def initialize(configuration = Fullsend.configuration)
       @configuration = configuration
     end
@@ -393,7 +597,132 @@ module Fullsend
       )
     end
 
+    # POST /v1/unsubscribes
+    #
+    # Records that an address opted out. This is the durable half of an
+    # unsubscribe: stopping an enrollment ends the runs already open, but only
+    # an opt-out row keeps the next matching event from enrolling them again.
+    # A preferences page wants this; it may also want to stop the live runs so
+    # the current sequence goes quiet immediately.
+    #
+    #   Fullsend::Client.new.create_unsubscribe(
+    #     user.email,
+    #     scope: Fullsend::Client::SCOPE_CAMPAIGN,
+    #     campaign_id: "trial-nurture",
+    #     reason: Fullsend::Client::REASON_MANUAL
+    #   )
+    #
+    # `scope` has deliberately no default. The service defaults a missing scope
+    # to app-wide, and silently opting someone out of every campaign because a
+    # keyword was forgotten is not a failure mode worth keeping — so name it.
+    # SCOPE_CAMPAIGN requires `campaign_id` (the campaign's string id, which is
+    # what Enrollment#campaign_id returns).
+    #
+    # `reason` defaults to the service's own default (manual) when omitted.
+    # `app_id` defaults to the configured fullsend_app_id.
+    #
+    # Returns an UnsubscribeResult; a non-2xx does not raise, so check
+    # `#success?`.
+    def create_unsubscribe(email, scope:, campaign_id: nil, reason: nil, app_id: nil)
+      UnsubscribeResult.from(
+        request(:post, UNSUBSCRIBES_PATH, body: unsubscribe_payload(email, scope, campaign_id, reason, app_id))
+      )
+    end
+
+    # GET /v1/unsubscribes
+    #
+    # Which opt-outs are on file. A preferences page needs this to render
+    # current state: opting out does not end the enrollment, only silences it,
+    # so #drip_enrollments keeps returning a campaign someone already left.
+    #
+    #   result = Fullsend::Client.new.unsubscribes("joe@example.com")
+    #   result.app_wide?                    # => false
+    #   result.suppressed?("trial-nurture") # => true
+    #
+    # `app_id` defaults to the configured fullsend_app_id; pass ALL_APPS to opt
+    # out of that scoping. `scope` narrows to one kind of row — usually you want
+    # both, since an app-wide row suppresses campaigns too.
+    #
+    # Returns an UnsubscribesResult; a non-2xx does not raise.
+    def unsubscribes(email = nil, app_id: nil, scope: nil, page_size: nil)
+      UnsubscribesResult.from(
+        request(:get, UNSUBSCRIBES_PATH, query: unsubscribes_query(email, app_id, scope, page_size))
+      )
+    end
+
+    # DELETE /v1/unsubscribes/:id
+    #
+    # Removes an opt-out row — re-subscribing the address. Takes the row id from
+    # Unsubscribe#id (UnsubscribesResult#for_campaign / #app_wide are how a
+    # preferences page finds the one to remove).
+    #
+    # Note this only clears the local marketing opt-out. An address SES itself
+    # suppressed after a hard bounce or complaint stays suppressed — see
+    # #delete_ses_suppression for that list.
+    def delete_unsubscribe(id)
+      raise ArgumentError, "id is required to delete an unsubscribe" if blank?(id)
+
+      request(:delete, "#{UNSUBSCRIBES_PATH}/#{ERB::Util.url_encode(id)}")
+    end
+
     private
+
+    def unsubscribes_query(email, app_id, scope, page_size)
+      query = {}
+      query[:email] = email.to_s unless blank?(email)
+
+      resolved_app_id = resolve_drip_app_id(app_id)
+      query[:app_id] = resolved_app_id.to_s unless resolved_app_id.nil?
+
+      unless blank?(scope)
+        unless UNSUBSCRIBE_SCOPES.include?(scope.to_s)
+          raise ArgumentError, "unknown unsubscribe scope #{scope.inspect}. One of: #{UNSUBSCRIBE_SCOPES.join(", ")}"
+        end
+
+        query[:scope] = scope.to_s
+      end
+
+      unless page_size.nil?
+        size = page_size.to_i
+        unless (1..DRIP_MAX_PAGE_SIZE).cover?(size)
+          raise ArgumentError, "page_size must be between 1 and #{DRIP_MAX_PAGE_SIZE}, got #{page_size.inspect}"
+        end
+
+        query[:page_size] = size
+      end
+
+      query
+    end
+
+    # Mirrors the service's own validation so a bad call names the offending
+    # field here rather than coming back as an opaque 400 — and, for scope,
+    # so an omitted campaign_id cannot quietly widen into an app-wide opt-out.
+    def unsubscribe_payload(email, scope, campaign_id, reason, app_id)
+      raise ArgumentError, "email is required to create an unsubscribe" if blank?(email)
+
+      resolved_app_id = blank?(app_id) ? @configuration.fullsend_app_id : app_id
+      if blank?(resolved_app_id)
+        raise ConfigurationError,
+          "app_id is required to create an unsubscribe. Set fullsend_app_id via Fullsend.configure or pass app_id:."
+      end
+
+      unless UNSUBSCRIBE_SCOPES.include?(scope.to_s)
+        raise ArgumentError, "unknown unsubscribe scope #{scope.inspect}. One of: #{UNSUBSCRIBE_SCOPES.join(", ")}"
+      end
+
+      if scope.to_s == SCOPE_CAMPAIGN && blank?(campaign_id)
+        raise ArgumentError, "campaign_id is required when scope is #{SCOPE_CAMPAIGN.inspect}"
+      end
+
+      unless blank?(reason) || UNSUBSCRIBE_REASONS.include?(reason.to_s)
+        raise ArgumentError, "unknown unsubscribe reason #{reason.inspect}. One of: #{UNSUBSCRIBE_REASONS.join(", ")}"
+      end
+
+      payload = { email: email.to_s, app_id: resolved_app_id.to_s, scope: scope.to_s }
+      payload[:campaign_id] = campaign_id.to_s unless blank?(campaign_id)
+      payload[:reason] = reason.to_s unless blank?(reason)
+      payload
+    end
 
     # Validated here so a bad filter fails at the call site with the offending
     # field named, rather than as an opaque 400 — or, for an oversized

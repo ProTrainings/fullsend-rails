@@ -520,6 +520,123 @@ Returns a `Fullsend::Client::DripEnrollmentsResult` (a `Response`, so
 and a failed call need telling apart. A blank `email`, an unknown `status`, or a
 `page_size` outside 1..500 raises `ArgumentError` before any request goes out.
 
+## Unsubscribing Someone
+
+`create_unsubscribe` records that an address opted out. This is the durable half
+of an unsubscribe, and the distinction matters: stopping an enrollment ends the
+runs already open, but only an opt-out row keeps the *next* matching event from
+enrolling them all over again.
+
+```ruby
+result = Fullsend.create_unsubscribe(
+  user.email,
+  scope: Fullsend::Client::SCOPE_CAMPAIGN,
+  campaign_id: enrollment.campaign_id,
+  reason: Fullsend::Client::REASON_MANUAL
+)
+
+result.success?     # => true
+result.scope        # => "campaign"
+result.app_wide?    # => false
+result.created_at   # => Time
+```
+
+Issues `POST /v1/unsubscribes`, using the same `api_base_url` / `api_token` as
+the rest of the HTTP client.
+
+### `scope` is required, deliberately
+
+Two scopes: `SCOPE_CAMPAIGN` silences one automation and leaves the others,
+`SCOPE_APP` is "stop emailing me from this app at all".
+
+The service defaults a missing scope to app-wide. The gem refuses to send one
+instead, because opting somebody out of *every* campaign because a keyword got
+forgotten is not a failure mode worth inheriting. Name the scope:
+
+```ruby
+Fullsend.create_unsubscribe(email, scope: Fullsend::Client::SCOPE_APP)
+Fullsend.create_unsubscribe(email, scope: Fullsend::Client::SCOPE_CAMPAIGN, campaign_id: "trial-nurture")
+```
+
+`campaign_id` is the campaign's *string* id — its tag — which is exactly what
+`Enrollment#campaign_id` hands back, so pairing this with `drip_enrollments`
+needs no id translation. Campaign scope without a `campaign_id` raises
+`ArgumentError` rather than silently widening.
+
+### `reason`
+
+`REASON_ONE_CLICK` (an RFC 8058 List-Unsubscribe POST), `REASON_LINK_CLICK` (a
+footer link), or `REASON_MANUAL` (a preferences page, or a support agent acting
+on a request). It's what a compliance question asks about a year later, so pass
+the one that's true. Omitted, the service records `manual`.
+
+### An opt-out is not an unenrollment
+
+Opting someone out does **not** end their enrollment. The run stays live and
+`drip_enrollments` keeps returning it — the service re-checks the opt-out list at
+send time instead, and drops the send. So the mail does stop immediately, without
+the enrollment changing to say so.
+
+Which matters for anything that renders state: after someone unsubscribes from
+"Trial nurture", asking `drip_enrollments` still reports them enrolled in it. A
+preferences page that only reads enrollments will show the box they just
+unchecked as checked again. Read both — enrollments for what they're *in*,
+`unsubscribes` (below) for what's *silenced*.
+
+(Ending the enrollment outright is a separate operation, `POST
+/v1/drip-campaigns/:id/stop`, and is not wrapped here. It is an admin action —
+`stop_reason=manual` — not what an unsubscribe needs.)
+
+`create_unsubscribe` returns an `UnsubscribeResult` (a `Response`) and does not
+raise on a non-2xx — check `#success?`. A blank `email`, an unknown `scope` or
+`reason`, or campaign scope without a `campaign_id` raises `ArgumentError`
+before any request goes out; an unresolvable `app_id` raises
+`Fullsend::ConfigurationError`.
+
+## Reading And Undoing Opt-Outs
+
+`unsubscribes` answers "what has this address opted out of" — the other half of
+what a preferences page needs, per the note above.
+
+```ruby
+result = Fullsend.unsubscribes(user.email)
+
+result.app_wide?                     # => false  (no "stop everything" row)
+result.campaign_ids                  # => ["trial-nurture"]
+result.suppressed?("trial-nurture")  # => true   (would the service skip the send?)
+result.for_campaign("trial-nurture") # => the row, whose #id undoes it
+```
+
+`suppressed?` is the question worth asking: it applies the service's own rule, so
+an app-wide opt-out reads as suppressing every campaign. `app_wide?` and
+`campaign_ids` are kept separate because they are different states — a page
+renders "you've turned off all email" differently from a list of individual
+boxes, and `campaign_ids` deliberately does not fold an app-wide row in.
+
+Issues `GET /v1/unsubscribes`, scoped to the configured `fullsend_app_id` unless
+you pass `app_id:` (or `Fullsend::Client::ALL_APPS`). `scope:` and `page_size:`
+narrow it further; usually you want both scopes, since an app-wide row suppresses
+campaigns too.
+
+### Re-subscribing
+
+`delete_unsubscribe` removes an opt-out row, by id:
+
+```ruby
+row = Fullsend.unsubscribes(user.email).for_campaign("trial-nurture")
+Fullsend.delete_unsubscribe(row.id) if row
+```
+
+This clears only the local marketing opt-out. An address SES suppressed itself
+after a hard bounce or a complaint stays suppressed — that's
+`delete_ses_suppression`, a different list. Re-subscribing someone who is on
+both takes both calls.
+
+`unsubscribes` returns an `UnsubscribesResult` and `delete_unsubscribe` a plain
+`Response`; neither raises on a non-2xx, and a missing row comes back
+`not_found?`. A blank id, an unknown `scope`, or a `page_size` outside 1..500
+raises `ArgumentError`.
+
 ## License
 
 MIT

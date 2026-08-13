@@ -44,6 +44,36 @@ module Fullsend
       Client.new.drip_enrollments(email, **options)
     end
 
+    # Record that an address opted out — the durable half of an unsubscribe,
+    # which keeps the next matching event from re-enrolling them.
+    #
+    #   Fullsend.create_unsubscribe(user.email,
+    #     scope: Fullsend::Client::SCOPE_CAMPAIGN,
+    #     campaign_id: enrollment.campaign_id)
+    #
+    # `scope` is required on purpose. Returns a
+    # Fullsend::Client::UnsubscribeResult. See Client#create_unsubscribe.
+    def create_unsubscribe(email, **options)
+      Client.new.create_unsubscribe(email, **options)
+    end
+
+    # Which opt-outs are on file for an address — what a preferences page needs
+    # to render current state, since opting out silences an enrollment without
+    # ending it.
+    #
+    #   Fullsend.unsubscribes(user.email).suppressed?("trial-nurture")
+    #
+    # Returns a Fullsend::Client::UnsubscribesResult. See Client#unsubscribes.
+    def unsubscribes(email = nil, **options)
+      Client.new.unsubscribes(email, **options)
+    end
+
+    # Remove an opt-out row, re-subscribing the address. Takes the row id.
+    # See Client#delete_unsubscribe.
+    def delete_unsubscribe(id)
+      Client.new.delete_unsubscribe(id)
+    end
+
     def configure
       yield(configuration)
     end
