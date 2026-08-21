@@ -69,6 +69,27 @@ RSpec.describe Fullsend::Delivery do
       end
     end
 
+    it "carries each destination's locale through to the SQS payload" do
+      mail = template_mail(
+        template_name: "welcome-v1",
+        destinations: [
+          { to: "a@example.com", data: { first_name: "Ada" }, locale: "es" },
+          { to: "b@example.com", data: { first_name: "Babbage" }, locale: "fr-CA" }
+        ]
+      )
+
+      delivery = described_class.new({})
+      delivery.deliver!(mail)
+
+      expect(sqs_client).to have_received(:send_message) do |args|
+        body = JSON.parse(args[:message_body])
+        expect(body["destinations"]).to eq([
+          { "to" => "a@example.com", "data" => { "first_name" => "Ada" }, "locale" => "es" },
+          { "to" => "b@example.com", "data" => { "first_name" => "Babbage" }, "locale" => "fr-CA" }
+        ])
+      end
+    end
+
     it "omits body/toAddresses/ccAddresses/bccAddresses/templateData on the templated path" do
       mail = template_mail
       mail.header["X-SES-API"] = { campaign_id: "welcome" }.to_json

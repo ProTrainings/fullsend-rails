@@ -16,9 +16,24 @@ module Fullsend
       apply_provider_headers("X-SES-API", **args)
     end
 
-    def set_template(name, destinations:)
+    # Recipients in one batch can speak different languages, so the locale
+    # rides on each destination rather than on the message. Pass it per
+    # entry; `locale:` here is the batch fallback for entries that omit one,
+    # and defaults to I18n.locale so existing mailers keep working.
+    #
+    #   set_template("welcome-v1", destinations: [
+    #     { to: "ada@example.com", data: { first_name: "Ada" }, locale: :es },
+    #     { to: "bob@example.com", data: { first_name: "Bob" } } # => I18n.locale
+    #   ])
+    def set_template(name, destinations:, locale: nil)
+      fallback = fullsend_normalize_locale(locale) || fullsend_current_locale
+
+      resolved = Array(destinations).map do |destination|
+        fullsend_apply_destination_locale(destination, fallback)
+      end
+
       headers["X-Fullsend-Template"] =
-        { name: name, destinations: destinations }.to_json
+        { name: name, destinations: resolved }.to_json
     end
 
     def apply_provider_headers(header_key, **args)
@@ -35,6 +50,32 @@ module Fullsend
         options: args[:options]
       }
       headers[header_key] = header_hash.to_json
+    end
+
+    private
+
+    # Preserves the caller's key style — a string-keyed destination stays
+    # string-keyed — so the hash round-trips to the same JSON either way.
+    def fullsend_apply_destination_locale(destination, fallback)
+      destination = destination.to_h
+      key = destination.key?("locale") ? "locale" : :locale
+      locale = fullsend_normalize_locale(destination[key]) || fallback
+      return destination if locale.nil?
+
+      destination.merge(key => locale)
+    end
+
+    def fullsend_normalize_locale(value)
+      value = value.to_s
+      value.empty? ? nil : value
+    end
+
+    # nil rather than a guess when I18n is absent: better to send no locale
+    # than a wrong one the downstream service would render against.
+    def fullsend_current_locale
+      return nil unless defined?(I18n) && I18n.respond_to?(:locale)
+
+      fullsend_normalize_locale(I18n.locale)
     end
   end
 end

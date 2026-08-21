@@ -89,18 +89,20 @@ RSpec.describe Fullsend::MailerHelpers do
   end
 
   describe "#set_template" do
+    # Every destination picks up a locale (see the locale specs below), so
+    # these pass an explicit one rather than depending on ambient I18n state.
     it "writes name and destinations into the X-Fullsend-Template header" do
       destinations = [
         { to: "a@example.com", data: { first_name: "Ada" } },
         { to: "b@example.com", data: { first_name: "Babbage" } }
       ]
-      mailer.set_template("welcome-v1", destinations: destinations)
+      mailer.set_template("welcome-v1", destinations: destinations, locale: "en")
       header = JSON.parse(mailer.headers["X-Fullsend-Template"])
 
       expect(header["name"]).to eq("welcome-v1")
       expect(header["destinations"]).to eq([
-        { "to" => "a@example.com", "data" => { "first_name" => "Ada" } },
-        { "to" => "b@example.com", "data" => { "first_name" => "Babbage" } }
+        { "to" => "a@example.com", "data" => { "first_name" => "Ada" }, "locale" => "en" },
+        { "to" => "b@example.com", "data" => { "first_name" => "Babbage" }, "locale" => "en" }
       ])
     end
 
@@ -114,6 +116,94 @@ RSpec.describe Fullsend::MailerHelpers do
 
       expect(header["name"]).to eq("welcome-v1")
       expect(header["destinations"]).to eq([])
+    end
+  end
+
+  describe "#set_template locale" do
+    def destinations_from(header_name = "X-Fullsend-Template")
+      JSON.parse(mailer.headers[header_name])["destinations"]
+    end
+
+    it "keeps a per-destination locale, so one batch can mix languages" do
+      mailer.set_template("welcome-v1", destinations: [
+        { to: "a@example.com", data: { first_name: "Ada" }, locale: :es },
+        { to: "b@example.com", data: { first_name: "Babbage" }, locale: "fr-CA" }
+      ])
+
+      expect(destinations_from.map { |d| d["locale"] }).to eq(["es", "fr-CA"])
+    end
+
+    it "normalizes a symbol locale to a string" do
+      mailer.set_template("t", destinations: [{ to: "a@example.com", locale: :de }])
+
+      expect(destinations_from.first["locale"]).to eq("de")
+    end
+
+    it "fills a missing destination locale from the batch locale" do
+      mailer.set_template("t", locale: :es, destinations: [
+        { to: "a@example.com", locale: :fr },
+        { to: "b@example.com" }
+      ])
+
+      expect(destinations_from.map { |d| d["locale"] }).to eq(["fr", "es"])
+    end
+
+    it "treats a blank destination locale as absent" do
+      mailer.set_template("t", locale: :es, destinations: [{ to: "a@example.com", locale: "" }])
+
+      expect(destinations_from.first["locale"]).to eq("es")
+    end
+
+    it "falls back to I18n.locale when neither is given" do
+      stub_const("I18n", double(locale: :"pt-BR"))
+      mailer.set_template("t", destinations: [{ to: "a@example.com" }])
+
+      expect(destinations_from.first["locale"]).to eq("pt-BR")
+    end
+
+    it "prefers an explicit locale over I18n.locale" do
+      stub_const("I18n", double(locale: :en))
+      mailer.set_template("t", locale: :ja, destinations: [{ to: "a@example.com" }])
+
+      expect(destinations_from.first["locale"]).to eq("ja")
+    end
+
+    it "omits locale entirely when there is no locale to send" do
+      hide_const("I18n")
+      mailer.set_template("t", destinations: [{ to: "a@example.com", data: { x: 1 } }])
+
+      expect(destinations_from.first).to eq("to" => "a@example.com", "data" => { "x" => 1 })
+    end
+
+    it "leaves other destination keys untouched" do
+      mailer.set_template("t", locale: :es, destinations: [
+        { to: "a@example.com", data: { first_name: "Ada" } }
+      ])
+
+      expect(destinations_from.first).to eq(
+        "to" => "a@example.com",
+        "data" => { "first_name" => "Ada" },
+        "locale" => "es"
+      )
+    end
+
+    it "handles string-keyed destinations without duplicating the locale key" do
+      mailer.set_template("t", locale: :es, destinations: [
+        { "to" => "a@example.com", "locale" => "fr" },
+        { "to" => "b@example.com" }
+      ])
+
+      expect(destinations_from).to eq([
+        { "to" => "a@example.com", "locale" => "fr" },
+        { "to" => "b@example.com", "locale" => "es" }
+      ])
+    end
+
+    it "does not mutate the caller's destination hashes" do
+      destination = { to: "a@example.com" }
+      mailer.set_template("t", locale: :es, destinations: [destination])
+
+      expect(destination).to eq(to: "a@example.com")
     end
   end
 
