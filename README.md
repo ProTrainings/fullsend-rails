@@ -164,14 +164,15 @@ end
 ## Templates and Bulk Destinations
 
 Send one SQS message per campaign batch, with per-recipient Mustache data.
-`destinations` is an array of `{ to:, data: }` entries (mapped onto AWS SES
-`SendBulkTemplatedEmail` downstream, which caps each call at 50 destinations).
+`destinations` is an array of `{ to:, data:, locale: }` entries (mapped onto AWS
+SES `SendBulkTemplatedEmail` downstream, which caps each call at 50
+destinations).
 
 ```ruby
 class CampaignMailer < ApplicationMailer
   def welcome_batch(users)
     destinations = users.map do |user|
-      { to: user.email, data: { first_name: user.first_name } }
+      { to: user.email, data: { first_name: user.first_name }, locale: user.locale }
     end
 
     set_template("welcome-v1", destinations: destinations)
@@ -188,15 +189,47 @@ The gem emits an SQS message of the form:
   "fromAddress": ["App <noreply@example.com>"],
   "subject": "Welcome!",
   "destinations": [
-    { "to": "user@example.com", "data": { "first_name": "Ada" } }
+    { "to": "user@example.com", "data": { "first_name": "Ada" }, "locale": "es" }
   ],
   "emailTags": [ ... ]
 }
 ```
 
-`destinations` is authoritative: per-recipient `to` addresses and Mustache
-`data` live there. Do not set `to`, `cc`, `bcc`, or a body on the `Mail`
+`destinations` is authoritative: per-recipient `to` addresses, Mustache `data`,
+and `locale` live there. Do not set `to`, `cc`, `bcc`, or a body on the `Mail`
 object — those fields are not included in the payload.
+
+### Locale
+
+Locale is **per destination**, not per message — a batch of 100 users can hold
+a mix of languages, and the downstream service renders each recipient against
+their own locale.
+
+Resolution order for each entry, first match wins:
+
+1. The entry's own `locale:`
+2. The batch-wide `locale:` passed to `set_template`
+3. `I18n.locale`
+
+```ruby
+# Per recipient — the usual case for a mixed batch.
+set_template("welcome-v1", destinations: [
+  { to: "ada@example.com",   data: { first_name: "Ada" }, locale: :es },
+  { to: "bob@example.com",   data: { first_name: "Bob" }, locale: "fr-CA" }
+])
+
+# One locale for the whole batch.
+set_template("welcome-v1", destinations: destinations, locale: :es)
+
+# Neither given — every destination gets I18n.locale.
+set_template("welcome-v1", destinations: destinations)
+```
+
+Values are normalized to strings, so `:es`, `"es"`, and `:"fr-CA"` all
+serialize the way the payload above shows. An empty or `nil` locale on an entry
+counts as absent and falls through to the next step. If none of the three
+yields a value (`I18n` isn't loaded), the key is omitted and the downstream
+service applies its own default.
 
 ## Attachments
 
