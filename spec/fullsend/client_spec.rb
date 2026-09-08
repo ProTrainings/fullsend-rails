@@ -89,6 +89,95 @@ RSpec.describe Fullsend::Client do
     end
   end
 
+  describe "#create_ses_suppression" do
+    let(:stub_response) { double("response", code: "201", body: "") }
+
+    it "POSTs the address and reason to the suppression collection" do
+      described_class.new.create_ses_suppression(
+        "user@example.com",
+        reason: described_class::SES_SUPPRESSION_REASON_COMPLAINT
+      )
+
+      expect(last_request).to be_a(Net::HTTP::Post)
+      expect(last_request.path).to eq("/v1/ses-suppressions")
+      expect(JSON.parse(last_request.body)).to eq("email" => "user@example.com", "reason" => "COMPLAINT")
+    end
+
+    it "includes the source when one is given" do
+      described_class.new.create_ses_suppression(
+        "user@example.com",
+        reason: described_class::SES_SUPPRESSION_REASON_BOUNCE,
+        source: described_class::SES_SUPPRESSION_SOURCE_SPARKPOST
+      )
+
+      expect(JSON.parse(last_request.body)["source"]).to eq("sparkpost")
+    end
+
+    it "omits the source rather than sending an empty one" do
+      described_class.new.create_ses_suppression(
+        "user@example.com",
+        reason: described_class::SES_SUPPRESSION_REASON_BOUNCE,
+        source: ""
+      )
+
+      expect(JSON.parse(last_request.body)).not_to have_key("source")
+    end
+
+    it "sends the api_token as a bearer token" do
+      described_class.new.create_ses_suppression(
+        "user@example.com",
+        reason: described_class::SES_SUPPRESSION_REASON_BOUNCE
+      )
+
+      expect(last_request["Authorization"]).to eq("Bearer test-token")
+    end
+
+    it "returns a successful Response for a 2xx" do
+      response = described_class.new.create_ses_suppression(
+        "user@example.com",
+        reason: described_class::SES_SUPPRESSION_REASON_BOUNCE
+      )
+
+      expect(response.success?).to be(true)
+      expect(response.status_code).to eq(201)
+    end
+
+    # Named at the call site rather than coming back as an opaque 400, the same
+    # way an unknown unsubscribe scope is.
+    it "raises on a reason the service does not recognize" do
+      expect {
+        described_class.new.create_ses_suppression("user@example.com", reason: "VALIDATION")
+      }.to raise_error(ArgumentError, /unknown SES suppression reason/)
+    end
+
+    it "raises when the address is missing" do
+      expect {
+        described_class.new.create_ses_suppression("", reason: described_class::SES_SUPPRESSION_REASON_BOUNCE)
+      }.to raise_error(ArgumentError, /email is required/)
+    end
+
+    it "does not issue a request when validation fails" do
+      begin
+        described_class.new.create_ses_suppression("", reason: described_class::SES_SUPPRESSION_REASON_BOUNCE)
+      rescue ArgumentError
+        nil
+      end
+
+      expect(captured).to be_empty
+    end
+
+    it "wraps transport-level failures in Fullsend::ApiError" do
+      allow(http).to receive(:request).and_raise(Errno::ECONNREFUSED)
+
+      expect {
+        described_class.new.create_ses_suppression(
+          "user@example.com",
+          reason: described_class::SES_SUPPRESSION_REASON_BOUNCE
+        )
+      }.to raise_error(Fullsend::ApiError)
+    end
+  end
+
   describe "#track_event" do
     let(:stub_response) do
       double("response", code: "200", body: {

@@ -47,6 +47,19 @@ module Fullsend
     REASON_MANUAL = "manual".freeze
     UNSUBSCRIBE_REASONS = [REASON_ONE_CLICK, REASON_LINK_CLICK, REASON_MANUAL].freeze
 
+    # Why an address is on the SES suppression list. COMPLAINT and BOUNCE are
+    # the two SES itself reports; VALIDATION marks the addresses SES blocked
+    # through Auto Validation and is never something a caller asserts, so it is
+    # not offered here.
+    SES_SUPPRESSION_REASON_BOUNCE = "BOUNCE".freeze
+    SES_SUPPRESSION_REASON_COMPLAINT = "COMPLAINT".freeze
+    SES_SUPPRESSION_REASONS = [SES_SUPPRESSION_REASON_BOUNCE, SES_SUPPRESSION_REASON_COMPLAINT].freeze
+
+    # Where the row came from. The service sets `sns` and `reconcile` itself;
+    # SOURCE_SPARKPOST is for a suppression mirrored from the other provider,
+    # which is the only kind an outside caller can create.
+    SES_SUPPRESSION_SOURCE_SPARKPOST = "sparkpost".freeze
+
     # Enrollment statuses the service recognizes. Checked before the request so
     # a typo names itself here rather than coming back as an opaque 400.
     DRIP_STATUSES = %w[active waiting completed stopped].freeze
@@ -538,6 +551,31 @@ module Fullsend
       request(:delete, "#{SES_SUPPRESSIONS_PATH}/#{ERB::Util.url_encode(email)}")
     end
 
+    # POST /v1/ses-suppressions
+    #
+    # Puts an address on the SES suppression list, so the service stops
+    # delivering to it. SES adds its own bounces and complaints; this is for a
+    # suppression learned somewhere else — the other email provider reporting a
+    # hard bounce or a spam complaint for the same person.
+    #
+    #   Fullsend::Client.new.create_ses_suppression(
+    #     "user@example.com",
+    #     reason: Fullsend::Client::SES_SUPPRESSION_REASON_COMPLAINT,
+    #     source: Fullsend::Client::SES_SUPPRESSION_SOURCE_SPARKPOST
+    #   )
+    #
+    # Idempotent: the service upserts on the address, keeping the original
+    # `source` and moving `reason` to the newer signal, so replaying a webhook
+    # cannot pile up rows.
+    #
+    # Suppression is not an unsubscribe — see #create_unsubscribe for the
+    # marketing opt-out list, which is checked separately at send time.
+    #
+    # Returns a Response; a non-2xx does not raise, so check `#success?`.
+    def create_ses_suppression(email, reason:, source: nil)
+      request(:post, SES_SUPPRESSIONS_PATH, body: ses_suppression_payload(email, reason, source))
+    end
+
     # POST /v1/events
     #
     # Reports a domain fact ("this happened") to the event intake. The call is
@@ -697,6 +735,18 @@ module Fullsend
     # Mirrors the service's own validation so a bad call names the offending
     # field here rather than coming back as an opaque 400 — and, for scope,
     # so an omitted campaign_id cannot quietly widen into an app-wide opt-out.
+    def ses_suppression_payload(email, reason, source)
+      raise ArgumentError, "email is required to create an SES suppression" if blank?(email)
+
+      unless SES_SUPPRESSION_REASONS.include?(reason.to_s)
+        raise ArgumentError, "unknown SES suppression reason #{reason.inspect}. One of: #{SES_SUPPRESSION_REASONS.join(", ")}"
+      end
+
+      payload = { email: email.to_s, reason: reason.to_s }
+      payload[:source] = source.to_s unless blank?(source)
+      payload
+    end
+
     def unsubscribe_payload(email, scope, campaign_id, reason, app_id)
       raise ArgumentError, "email is required to create an unsubscribe" if blank?(email)
 
