@@ -359,6 +359,36 @@ Transport-level failures (timeouts, refused connections) raise
 `Fullsend::ApiError`. A missing `api_base_url`/`api_token` — or a callable
 `api_token` that resolves to nothing — raises `Fullsend::ConfigurationError`.
 
+### Adding an SES suppression
+
+SES records its own bounces and complaints. Use this when the signal arrived
+somewhere else — another email provider reporting a hard bounce or a spam
+complaint for the same person — and that address should stop receiving mail
+here too:
+
+```ruby
+response = Fullsend::Client.new.create_ses_suppression(
+  "user@example.com",
+  reason: Fullsend::Client::SES_SUPPRESSION_REASON_COMPLAINT,
+  source: Fullsend::Client::SES_SUPPRESSION_SOURCE_SPARKPOST
+)
+```
+
+`create_ses_suppression` issues `POST /v1/ses-suppressions`. `reason` is
+required and must be `SES_SUPPRESSION_REASON_BOUNCE` or
+`SES_SUPPRESSION_REASON_COMPLAINT` — an unknown one raises `ArgumentError` at
+the call site instead of coming back as a 400. `source` is optional and records
+where the row came from; the service sets `sns` and `reconcile` itself.
+
+The service upserts on the address — the original `source` is kept and `reason`
+moves to the newer signal — so replaying a webhook is safe. Like the delete, it
+returns a `Fullsend::Client::Response` and does not raise on an HTTP error
+status.
+
+Suppression is not an unsubscribe. It blocks every send to the address, while
+[an unsubscribe](#unsubscribing-someone) is the marketing opt-out list, checked
+separately. Mirroring a provider's *unsubscribe* belongs in `create_unsubscribe`.
+
 ## Event Triggers
 
 Automations in Fullsend are armed by *events* — domain facts your app reports
