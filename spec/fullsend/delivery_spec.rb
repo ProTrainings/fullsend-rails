@@ -43,6 +43,48 @@ RSpec.describe Fullsend::Delivery do
     mail
   end
 
+  # The single-recipient template shape: no destinations[], addresses left on
+  # the Mail object.
+  def single_template_mail(template_name: "receipt-v1", data: { first_name: "Ada" }, locale: "en", cc: nil)
+    mail = Mail.new do
+      from "App <noreply@example.com>"
+      to "user@example.com"
+      subject "Receipt"
+    end
+    mail.cc = cc if cc
+    payload = { name: template_name, data: data }
+    payload[:locale] = locale if locale
+    mail.header["X-Fullsend-Template"] = payload.to_json
+    mail
+  end
+
+  describe "#deliver! with a single-recipient template" do
+    it "keeps the Mail object's addresses and sends templateData and locale" do
+      delivery = described_class.new({})
+      delivery.deliver!(single_template_mail(cc: "manager@example.com"))
+
+      expect(sqs_client).to have_received(:send_message) do |args|
+        body = JSON.parse(args[:message_body])
+        expect(body["templateName"]).to eq("receipt-v1")
+        expect(body["templateData"]).to eq({ "first_name" => "Ada" })
+        expect(body["locale"]).to eq("en")
+        expect(body["toAddresses"]).to eq(["user@example.com"])
+        # The reason this shape exists: a batch cannot carry a Cc.
+        expect(body["ccAddresses"]).to eq(["manager@example.com"])
+        expect(body).not_to have_key("destinations")
+      end
+    end
+
+    it "does not send a body -- the template supplies it" do
+      delivery = described_class.new({})
+      delivery.deliver!(single_template_mail)
+
+      expect(sqs_client).to have_received(:send_message) do |args|
+        expect(JSON.parse(args[:message_body])).not_to have_key("body")
+      end
+    end
+  end
+
   describe "#deliver!" do
     it "sends a JSON message with templateName, fromAddress, subject, and destinations" do
       mail = template_mail(
