@@ -16,24 +16,44 @@ module Fullsend
       apply_provider_headers("X-SES-API", **args)
     end
 
-    # Recipients in one batch can speak different languages, so the locale
-    # rides on each destination rather than on the message. Pass it per
-    # entry; `locale:` here is the batch fallback for entries that omit one,
-    # and defaults to I18n.locale so existing mailers keep working.
+    # Names the template a message is rendered from. Two shapes:
+    #
+    # Batch — `destinations:`. Recipients in one batch can speak different
+    # languages, so the locale rides on each destination rather than on the
+    # message. Pass it per entry; `locale:` here is the batch fallback for
+    # entries that omit one, and defaults to I18n.locale.
     #
     #   set_template("welcome-v1", destinations: [
     #     { to: "ada@example.com", data: { first_name: "Ada" }, locale: :es },
     #     { to: "bob@example.com", data: { first_name: "Bob" } } # => I18n.locale
     #   ])
-    def set_template(name, destinations:, locale: nil)
-      fallback = fullsend_normalize_locale(locale) || fullsend_current_locale
-
-      resolved = Array(destinations).map do |destination|
-        fullsend_apply_destination_locale(destination, fallback)
+    #
+    # Single recipient — `data:`. Addresses stay on the Mail object, so this is
+    # the shape to use when a templated message has to carry a Cc or Bcc:
+    # destinations[] cannot, because the fan-out that splits a batch into one
+    # message per recipient drops them. It also keeps the message on the
+    # transactional lane, which rejects anything carrying destinations[].
+    #
+    #   mail(to: user.email, cc: manager.email, subject: "...")
+    #   set_template("receipt-v1", data: { first_name: "Ada" })
+    def set_template(name, destinations: nil, data: nil, locale: nil)
+      if destinations.nil? && data.nil?
+        raise ArgumentError, "set_template needs destinations: (a batch) or data: (one recipient)"
       end
 
+      fallback = fullsend_normalize_locale(locale) || fullsend_current_locale
+
       headers["X-Fullsend-Template"] =
-        { name: name, destinations: resolved }.to_json
+        if destinations.nil?
+          payload = { name: name, data: data }
+          payload[:locale] = fallback if fallback
+          payload.to_json
+        else
+          resolved = Array(destinations).map do |destination|
+            fullsend_apply_destination_locale(destination, fallback)
+          end
+          { name: name, destinations: resolved }.to_json
+        end
     end
 
     def apply_provider_headers(header_key, **args)

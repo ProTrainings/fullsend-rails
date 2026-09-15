@@ -82,9 +82,25 @@ module Fullsend
     private
 
     def build_message(mail, attachment_keys)
+      template = parse_template(mail)
+
       message =
-        if mail.header["X-Fullsend-Template"].present?
+        if template&.key?("destinations")
+          # A batch carries each recipient's address, data and locale inside
+          # destinations[], so the message-level address fields are ignored
+          # downstream and are left off rather than sent to be discarded.
           { fromAddress: mail["from"]&.formatted, subject: mail.subject }
+        elsif template
+          # One recipient: the template supplies the body, but the addresses are
+          # the Mail object's own. This is the only templated shape that can
+          # carry a Cc or Bcc.
+          {
+            toAddresses: mail["to"]&.formatted,
+            ccAddresses: mail["cc"]&.formatted,
+            bccAddresses: mail["bcc"]&.formatted,
+            fromAddress: mail["from"]&.formatted,
+            subject: mail.subject
+          }
         else
           {
             body: message_body(mail),
@@ -96,7 +112,7 @@ module Fullsend
           }
         end
 
-      extract_template(mail, message)
+      apply_template(template, message)
       extract_ses_tags(mail, message)
 
       message[:replyToAddresses] = mail["reply-to"].formatted if mail["reply-to"]
@@ -142,14 +158,27 @@ module Fullsend
       end
     end
 
-    def extract_template(mail, message)
-      return unless mail.header["X-Fullsend-Template"].present?
+    # nil when the header is absent or unreadable, in which case the message is
+    # built as an ordinary one -- a malformed header must not silently produce a
+    # templated send with no template.
+    def parse_template(mail)
+      header = mail.header["X-Fullsend-Template"]
+      return nil if header.nil? || header.value.to_s.empty?
 
-      template = JSON.parse(mail.header["X-Fullsend-Template"].value)
+      parsed = JSON.parse(header.value)
+      parsed.is_a?(Hash) ? parsed : nil
+    rescue JSON::ParserError
+      warn "[Fullsend] Failed to parse X-Fullsend-Template header: #{header.value}"
+      nil
+    end
+
+    def apply_template(template, message)
+      return if template.nil?
+
       message[:templateName] = template["name"] if template["name"]
       message[:destinations] = template["destinations"] if template.key?("destinations")
-    rescue JSON::ParserError
-      warn "[Fullsend] Failed to parse X-Fullsend-Template header: #{mail.header["X-Fullsend-Template"].value}"
+      message[:templateData] = template["data"] if template.key?("data")
+      message[:locale] = template["locale"] if template["locale"]
     end
 
     def extract_ses_tags(mail, message)
