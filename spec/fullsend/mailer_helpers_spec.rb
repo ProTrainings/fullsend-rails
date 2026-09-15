@@ -106,8 +106,30 @@ RSpec.describe Fullsend::MailerHelpers do
       ])
     end
 
-    it "requires the destinations keyword argument" do
+    it "requires either destinations: or data:" do
       expect { mailer.set_template("welcome-v1") }.to raise_error(ArgumentError)
+    end
+
+    it "writes name and data for a single recipient, with no destinations" do
+      mailer.set_template("receipt-v1", data: { first_name: "Ada" }, locale: "es")
+      header = JSON.parse(mailer.headers["X-Fullsend-Template"])
+
+      expect(header["name"]).to eq("receipt-v1")
+      expect(header["data"]).to eq({ "first_name" => "Ada" })
+      expect(header["locale"]).to eq("es")
+      # Absent, not empty: the delivery method keys the whole message shape off
+      # whether this key exists, and an empty array would read as a batch of
+      # nobody and drop the Mail object's own To/Cc.
+      expect(header).not_to have_key("destinations")
+    end
+
+    it "falls back to I18n.locale for a single recipient" do
+      I18n.locale = :es
+      mailer.set_template("receipt-v1", data: {})
+
+      expect(JSON.parse(mailer.headers["X-Fullsend-Template"])["locale"]).to eq("es")
+    ensure
+      I18n.locale = :en
     end
 
     it "accepts an empty destinations array" do
