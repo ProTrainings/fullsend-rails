@@ -320,7 +320,7 @@ RSpec.describe Fullsend::Client do
     let(:rows) do
       [
         {
-          id: 91, drip_campaign_id: 4, campaign_id: "trial-nurture",
+          id: 91, drip_campaign_id: 4, campaign_id: "trial-nurture", topic_key: "nurture",
           campaign_name: "Trial nurture", app_id: app_id, email: "joe@gmail.com",
           status: "waiting", active: true, campaign_deleted: false,
           current_node_id: "branch-1", subject_id: "u_12345",
@@ -496,6 +496,7 @@ RSpec.describe Fullsend::Client do
 
         expect(enrollment.id).to eq(91)
         expect(enrollment.drip_campaign_id).to eq(4)
+        expect(enrollment.topic_key).to eq("nurture")
         expect(enrollment.campaign_name).to eq("Trial nurture")
         expect(enrollment.email).to eq("joe@gmail.com")
         expect(enrollment.app_id).to eq(app_id)
@@ -609,6 +610,15 @@ RSpec.describe Fullsend::Client do
       )
     end
 
+    it "sends topic_key for a topic-scoped opt-out, lowercased" do
+      described_class.new.create_unsubscribe("joe@gmail.com",
+        scope: Fullsend::Client::SCOPE_TOPIC, topic_key: " Expiration_Reminders ")
+
+      expect(body["scope"]).to eq("topic")
+      expect(body["topic_key"]).to eq("expiration_reminders")
+      expect(body).not_to have_key("campaign_id")
+    end
+
     it "omits campaign_id for an app-wide opt-out" do
       described_class.new.create_unsubscribe("joe@gmail.com", scope: Fullsend::Client::SCOPE_APP)
 
@@ -637,6 +647,13 @@ RSpec.describe Fullsend::Client do
       it "raises ArgumentError for a blank email" do
         expect { described_class.new.create_unsubscribe("  ", scope: "app") }
           .to raise_error(ArgumentError, /email/)
+      end
+
+      # The service refuses a topic opt-out with no key; catching it here keeps
+      # the failure at the call site rather than as a 400 from somewhere else.
+      it "raises ArgumentError when a topic opt-out has no topic_key" do
+        expect { described_class.new.create_unsubscribe("joe@gmail.com", scope: "topic") }
+          .to raise_error(ArgumentError, /topic_key/)
       end
 
       it "requires scope to be named" do

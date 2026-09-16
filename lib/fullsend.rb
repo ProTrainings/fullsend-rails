@@ -48,8 +48,8 @@ module Fullsend
     # which keeps the next matching event from re-enrolling them.
     #
     #   Fullsend.create_unsubscribe(user.email,
-    #     scope: Fullsend::Client::SCOPE_CAMPAIGN,
-    #     campaign_id: enrollment.campaign_id)
+    #     scope: Fullsend::Client::SCOPE_TOPIC,
+    #     topic_key: enrollment.topic_key)
     #
     # `scope` is required on purpose. Returns a
     # Fullsend::Client::UnsubscribeResult. See Client#create_unsubscribe.

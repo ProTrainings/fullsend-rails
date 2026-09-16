@@ -36,8 +36,12 @@ module Fullsend
     # How wide an opt-out reaches. SCOPE_CAMPAIGN silences one automation and
     # leaves the rest; SCOPE_APP is "stop emailing me from this app at all".
     SCOPE_CAMPAIGN = "campaign".freeze
+    # SCOPE_TOPIC blocks every campaign mapped to one topic — the tier between
+    # leaving a single campaign and leaving everything an app sends. It is what
+    # an automation is left by: a run belongs to a topic, not to one campaign.
+    SCOPE_TOPIC = "topic".freeze
     SCOPE_APP = "app".freeze
-    UNSUBSCRIBE_SCOPES = [SCOPE_CAMPAIGN, SCOPE_APP].freeze
+    UNSUBSCRIBE_SCOPES = [SCOPE_CAMPAIGN, SCOPE_TOPIC, SCOPE_APP].freeze
 
     # How the opt-out was collected, which is what a compliance question asks
     # about later. ONE_CLICK is an RFC 8058 List-Unsubscribe POST, LINK_CLICK a
@@ -192,8 +196,18 @@ module Fullsend
 
       # The campaign's own string identifier (its tag), which is what a
       # campaign is referred to by outside the service.
+      #
+      # Empty for an automation enrollment: an automation has no single campaign
+      # tag, because each of its send steps carries its own. Use #topic_key for
+      # the thing the run actually belongs to.
       def campaign_id
         attributes["campaign_id"].to_s
+      end
+
+      # The automation this run belongs to, and what a topic-scoped opt-out
+      # names to leave it.
+      def topic_key
+        attributes["topic_key"].to_s
       end
 
       # The campaign's numeric primary key, as used in /v1/drip-campaigns/:id.
@@ -379,7 +393,13 @@ module Fullsend
         attributes["campaign_id"].to_s
       end
 
-      # "campaign" | "app". Comes back resolved, so this is the scope that was
+      # The topic's key. Set only on a topic-scoped row; campaign and app rows
+      # carry "".
+      def topic_key
+        attributes["topic_key"].to_s
+      end
+
+      # "campaign" | "topic" | "app". Comes back resolved, so this is the scope that was
       # actually stored rather than the one asked for.
       def scope
         attributes["scope"].to_s
@@ -393,6 +413,10 @@ module Fullsend
       # suppresses every campaign, so it outranks any campaign-scoped row.
       def app_wide?
         scope == SCOPE_APP
+      end
+
+      def topic?
+        scope == SCOPE_TOPIC
       end
 
       def created_at
@@ -443,6 +467,10 @@ module Fullsend
 
       def campaign_id
         unsubscribe.campaign_id
+      end
+
+      def topic_key
+        unsubscribe.topic_key
       end
 
       def scope
@@ -507,6 +535,24 @@ module Fullsend
       # takes.
       def for_campaign(campaign_id)
         unsubscribes.detect { |row| !row.app_wide? && row.campaign_id == campaign_id.to_s }
+      end
+
+      # Topic keys with a topic-scoped opt-out. Same reasoning as #campaign_ids:
+      # an app-wide row is a different state, not a member of this list.
+      def topic_keys
+        unsubscribes.select(&:topic?).map(&:topic_key).uniq
+      end
+
+      # The topic-scoped row for a key, or nil. Its id is what re-subscribing
+      # takes.
+      def for_topic(topic_key)
+        unsubscribes.detect { |row| row.topic? && row.topic_key == topic_key.to_s }
+      end
+
+      # Would the service refuse to send this topic's mail to them? An app-wide
+      # opt-out, or a topic-scoped one for this key.
+      def topic_suppressed?(topic_key)
+        app_wide? || !for_topic(topic_key).nil?
       end
 
       # Would the service refuse to send this campaign to them? Matches the
@@ -661,9 +707,10 @@ module Fullsend
     #
     # Returns an UnsubscribeResult; a non-2xx does not raise, so check
     # `#success?`.
-    def create_unsubscribe(email, scope:, campaign_id: nil, reason: nil, app_id: nil)
+    def create_unsubscribe(email, scope:, campaign_id: nil, topic_key: nil, reason: nil, app_id: nil)
       UnsubscribeResult.from(
-        request(:post, UNSUBSCRIBES_PATH, body: unsubscribe_payload(email, scope, campaign_id, reason, app_id))
+        request(:post, UNSUBSCRIBES_PATH,
+          body: unsubscribe_payload(email, scope, campaign_id, topic_key, reason, app_id))
       )
     end
 
@@ -747,7 +794,7 @@ module Fullsend
       payload
     end
 
-    def unsubscribe_payload(email, scope, campaign_id, reason, app_id)
+    def unsubscribe_payload(email, scope, campaign_id, topic_key, reason, app_id)
       raise ArgumentError, "email is required to create an unsubscribe" if blank?(email)
 
       resolved_app_id = blank?(app_id) ? @configuration.fullsend_app_id : app_id
@@ -764,12 +811,19 @@ module Fullsend
         raise ArgumentError, "campaign_id is required when scope is #{SCOPE_CAMPAIGN.inspect}"
       end
 
+      if scope.to_s == SCOPE_TOPIC && blank?(topic_key)
+        raise ArgumentError, "topic_key is required when scope is #{SCOPE_TOPIC.inspect}"
+      end
+
       unless blank?(reason) || UNSUBSCRIBE_REASONS.include?(reason.to_s)
         raise ArgumentError, "unknown unsubscribe reason #{reason.inspect}. One of: #{UNSUBSCRIBE_REASONS.join(", ")}"
       end
 
       payload = { email: email.to_s, app_id: resolved_app_id.to_s, scope: scope.to_s }
       payload[:campaign_id] = campaign_id.to_s unless blank?(campaign_id)
+      # Lowercased to match the service, which folds the key before storing and
+      # before matching it on the send path.
+      payload[:topic_key] = topic_key.to_s.strip.downcase unless blank?(topic_key)
       payload[:reason] = reason.to_s unless blank?(reason)
       payload
     end
