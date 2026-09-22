@@ -849,6 +849,27 @@ RSpec.describe Fullsend::Client do
       end
     end
 
+    describe "a topic opt-out" do
+      let(:rows) do
+        [{
+          id: 42, email: "joe@gmail.com", app_id: app_id, campaign_id: "", topic_key: "expire_reminders_uk",
+          topic_name: "Expiration reminders (UK)", scope: "topic", reason: "manual"
+        }]
+      end
+
+      subject(:result) { described_class.new.unsubscribes("joe@gmail.com") }
+
+      it "carries the topic's display name alongside its key" do
+        expect(result.unsubscribes.first.topic_key).to eq("expire_reminders_uk")
+        expect(result.unsubscribes.first.topic_name).to eq("Expiration reminders (UK)")
+      end
+
+      it "still finds the row by key, not by name" do
+        expect(result.for_topic("expire_reminders_uk").id).to eq(42)
+        expect(result.for_topic("Expiration reminders (UK)")).to be_nil
+      end
+    end
+
     it "returns an empty result for an address with no opt-outs" do
       allow(http).to receive(:request).and_return(double("response", code: "200", body: { unsubscribes: [] }.to_json))
 

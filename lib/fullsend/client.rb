@@ -399,6 +399,13 @@ module Fullsend
         attributes["topic_key"].to_s
       end
 
+      # The topic's display name, for labelling the row on a preferences page.
+      # "" wherever #topic_key is, and on a topic row whose topic was since
+      # deleted. Display only: filter, match and re-subscribe by #topic_key.
+      def topic_name
+        attributes["topic_name"].to_s
+      end
+
       # "campaign" | "topic" | "app". Comes back resolved, so this is the scope that was
       # actually stored rather than the one asked for.
       def scope
@@ -471,6 +478,10 @@ module Fullsend
 
       def topic_key
         unsubscribe.topic_key
+      end
+
+      def topic_name
+        unsubscribe.topic_name
       end
 
       def scope
