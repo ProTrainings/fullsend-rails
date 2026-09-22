@@ -321,7 +321,7 @@ RSpec.describe Fullsend::Client do
       [
         {
           id: 91, drip_campaign_id: 4, campaign_id: "trial-nurture", topic_key: "nurture",
-          campaign_name: "Trial nurture", app_id: app_id, email: "joe@gmail.com",
+          topic_name: "Nurture emails", campaign_name: "Trial nurture", app_id: app_id, email: "joe@gmail.com",
           status: "waiting", active: true, campaign_deleted: false,
           current_node_id: "branch-1", subject_id: "u_12345",
           correlation_key: "course:2", context: { course_id: 2 },
@@ -497,6 +497,7 @@ RSpec.describe Fullsend::Client do
         expect(enrollment.id).to eq(91)
         expect(enrollment.drip_campaign_id).to eq(4)
         expect(enrollment.topic_key).to eq("nurture")
+        expect(enrollment.topic_name).to eq("Nurture emails")
         expect(enrollment.campaign_name).to eq("Trial nurture")
         expect(enrollment.email).to eq("joe@gmail.com")
         expect(enrollment.app_id).to eq(app_id)

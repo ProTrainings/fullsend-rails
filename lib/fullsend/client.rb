@@ -210,6 +210,13 @@ module Fullsend
         attributes["topic_key"].to_s
       end
 
+      # The topic's display name, for labelling the run on a preferences page.
+      # "" when the run has no topic or the topic has no registry row. Display
+      # only: opt out and match by #topic_key.
+      def topic_name
+        attributes["topic_name"].to_s
+      end
+
       # The campaign's numeric primary key, as used in /v1/drip-campaigns/:id.
       def drip_campaign_id
         attributes["drip_campaign_id"]
