@@ -145,6 +145,13 @@ module Fullsend
         result["enrolled"].to_i
       end
 
+      # Values added to a collect-mode run that was already open. Counted apart
+      # from #enrolled, which counts runs opened, so a second course joining a
+      # person's single run is visible instead of reading as all zeros.
+      def collected
+        result["collected"].to_i
+      end
+
       def signalled
         result["signalled"].to_i
       end

@@ -477,6 +477,7 @@ result = Fullsend.track_event("course.started", email: user.email, properties: {
 result.registered?       # false => the key is not in the registry (or archived)
 result.matched_campaigns # automations whose triggers matched
 result.enrolled          # runs opened
+result.collected         # values added to a collect run already open
 result.signalled         # runs advanced
 result.stopped           # runs ended
 ```
