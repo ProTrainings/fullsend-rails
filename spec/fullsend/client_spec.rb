@@ -182,7 +182,7 @@ RSpec.describe Fullsend::Client do
     let(:stub_response) do
       double("response", code: "200", body: {
         event_key: "course.started", registered: true, matched_campaigns: 2,
-        enrolled: 1, signalled: 1, stopped: 0
+        enrolled: 1, collected: 1, signalled: 1, stopped: 0
       }.to_json)
     end
 
@@ -255,6 +255,7 @@ RSpec.describe Fullsend::Client do
       expect(result.registered?).to be(true)
       expect(result.matched_campaigns).to eq(2)
       expect(result.enrolled).to eq(1)
+      expect(result.collected).to eq(1)
       expect(result.signalled).to eq(1)
       expect(result.stopped).to eq(0)
     end
@@ -271,6 +272,7 @@ RSpec.describe Fullsend::Client do
       expect(result.success?).to be(true)
       expect(result.registered?).to be(false)
       expect(result.matched_campaigns).to eq(0)
+      expect(result.collected).to eq(0)
     end
 
     it "does not raise on a non-2xx" do
