@@ -32,6 +32,7 @@ module Fullsend
     EVENTS_PATH = "v1/events".freeze
     DRIP_ENROLLMENTS_PATH = "v1/drip-campaigns/enrollments".freeze
     UNSUBSCRIBES_PATH = "v1/unsubscribes".freeze
+    OBFUSCATE_RECIPIENT_PATH = "v1/recipients/obfuscate".freeze
 
     # How wide an opt-out reaches. SCOPE_CAMPAIGN silences one automation and
     # leaves the rest; SCOPE_APP is "stop emailing me from this app at all".
@@ -79,6 +80,9 @@ module Fullsend
 
     DEFAULT_OPEN_TIMEOUT = 2
     DEFAULT_READ_TIMEOUT = 5
+    # Obfuscating rewrites every table holding the address in one transaction,
+    # several of them scanned whole, so it can take well past the default.
+    OBFUSCATE_READ_TIMEOUT = 60
 
     REQUEST_CLASSES = {
       get: Net::HTTP::Get,
@@ -602,6 +606,53 @@ module Fullsend
       end
     end
 
+    # What obfuscating an address changed. The service answers with the
+    # pseudonym that replaced it and how many rows each table had rewritten.
+    class ObfuscationResult < Response
+      def self.from(response)
+        new(response.status_code, response.body)
+      end
+
+      # The erased-<hex>@erased.invalid address that now stands in for the
+      # person everywhere. The service returns it as `alias`, a Ruby keyword,
+      # hence the name. Worth keeping if anyone may need to find these rows
+      # again; it cannot be traced back to the original address.
+      def pseudonym
+        result["alias"]
+      end
+
+      # Live automation runs stopped first, so none goes on mailing the
+      # pseudonym.
+      def stopped_runs
+        result["stopped_runs"].to_i
+      end
+
+      # Rows rewritten per table, e.g. { "email_events" => 12, ... }.
+      def records
+        records = result["records"]
+        records.is_a?(Hash) ? records : {}
+      end
+
+      def total
+        result["total"].to_i
+      end
+
+      # False when the service held nothing for the address -- including on a
+      # repeat call, which finds only the pseudonym and changes nothing.
+      def obfuscated?
+        success? && (total.positive? || stopped_runs.positive?)
+      end
+
+      private
+
+      def result
+        return @result if defined?(@result)
+
+        parsed = data
+        @result = parsed.is_a?(Hash) ? parsed : {}
+      end
+    end
+
     def initialize(configuration = Fullsend.configuration)
       @configuration = configuration
     end
@@ -768,6 +819,42 @@ module Fullsend
       request(:delete, "#{UNSUBSCRIBES_PATH}/#{ERB::Util.url_encode(id)}")
     end
 
+    # POST /v1/recipients/obfuscate
+    #
+    # Replaces an address with a fresh random pseudonym everywhere the service
+    # stores it -- sends, events, webhook deliveries, automation runs, inbound
+    # events, conversions, unsubscribes -- for a "forget me" request. IRREVERSIBLE.
+    #
+    #   result = Fullsend::Client.new.obfuscate_recipient(user.email)
+    #   result.pseudonym  # => "erased-1f3c...@erased.invalid"
+    #   result.total      # => 37
+    #
+    # Nothing is deleted, so metrics and revenue totals are unchanged. The
+    # service stops the address's live automation runs first and clears the IP
+    # and user agent of its opens and clicks.
+    #
+    # Not app-scoped: the address is rewritten in every app. Its opt-outs move
+    # to the pseudonym too, so they no longer protect the real address -- if the
+    # person may come back, that is a fresh start. The SES suppression list is
+    # left alone, so an address that bounced stays blocked.
+    #
+    # The address travels in the body, not the URL, so it stays out of access
+    # logs. Calling it again for the same address changes nothing and returns
+    # `obfuscated?` false.
+    #
+    # `read_timeout` defaults to OBFUSCATE_READ_TIMEOUT rather than the client's
+    # usual 5 seconds; a large deployment may need more.
+    #
+    # Returns an ObfuscationResult; a non-2xx does not raise (an address the
+    # service cannot parse is a 400), so check `#success?`.
+    def obfuscate_recipient(email, read_timeout: OBFUSCATE_READ_TIMEOUT)
+      raise ArgumentError, "email is required to obfuscate a recipient" if blank?(email)
+
+      ObfuscationResult.from(
+        request(:post, OBFUSCATE_RECIPIENT_PATH, body: { email: email.to_s.strip }, read_timeout: read_timeout)
+      )
+    end
+
     private
 
     def unsubscribes_query(email, app_id, scope, page_size)
@@ -914,7 +1001,7 @@ module Fullsend
       value.nil? || value.to_s.strip.empty?
     end
 
-    def request(method, path, body: nil, query: nil)
+    def request(method, path, body: nil, query: nil, read_timeout: DEFAULT_READ_TIMEOUT)
       @configuration.validate_api!
 
       payload = encode_body(body)
@@ -924,7 +1011,7 @@ module Fullsend
       req["Authorization"] = authorization
       req.body = payload unless payload.empty?
 
-      res = connection(uri).request(req)
+      res = connection(uri, read_timeout).request(req)
       Response.new(res.code.to_i, res.body)
     rescue ConfigurationError
       raise
@@ -958,11 +1045,11 @@ module Fullsend
       uri
     end
 
-    def connection(uri)
+    def connection(uri, read_timeout = DEFAULT_READ_TIMEOUT)
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = (uri.scheme == "https")
       http.open_timeout = DEFAULT_OPEN_TIMEOUT
-      http.read_timeout = DEFAULT_READ_TIMEOUT
+      http.read_timeout = read_timeout
       http
     end
   end

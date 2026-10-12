@@ -701,6 +701,52 @@ both takes both calls.
 `not_found?`. A blank id, an unknown `scope`, or a `page_size` outside 1..500
 raises `ArgumentError`.
 
+## Forgetting Someone
+
+`obfuscate_recipient` handles a "forget me" request: the service replaces the
+address with a fresh random pseudonym everywhere it stores it.
+
+```ruby
+result = Fullsend.obfuscate_recipient(user.email)
+
+result.obfuscated?   # => true
+result.pseudonym     # => "erased-1f3c09a2b4d5e6f7@erased.invalid"
+result.stopped_runs  # => 1
+result.records       # => { "email_events" => 12, "emails" => 4, ... }
+result.total         # => 37
+```
+
+**It cannot be undone.** The pseudonym is random, not derived from the address,
+so nothing maps it back. Keep it if anyone may need to find those rows later.
+
+What happens:
+
+- **Nothing is deleted.** Sends, events, webhook deliveries, automation runs,
+  inbound events, conversions and unsubscribes all keep their rows, now under the
+  pseudonym. Campaign metrics and revenue totals are unchanged.
+- **Live automation runs stop first**, with stop reason `erased`, so none goes on
+  mailing an address that cannot receive mail.
+- **Open and click IP addresses and user agents** for the address are cleared.
+
+What to know before calling it:
+
+- **It is not app-scoped.** The address is rewritten in every app, whatever
+  `fullsend_app_id` is set to.
+- **Opt-outs move to the pseudonym too**, so they stop protecting the real
+  address. If the person signs up again, they start fresh.
+- **The SES suppression list is left alone**, so an address that hard-bounced
+  stays blocked.
+
+Issues `POST /v1/recipients/obfuscate`, with the address in the body rather than
+the URL so it stays out of access logs. The rewrite can take a while on a large
+deployment, so this call waits up to `Fullsend::Client::OBFUSCATE_READ_TIMEOUT`
+(60 seconds) instead of the usual 5; pass `read_timeout:` to change it.
+
+Returns an `ObfuscationResult` and does not raise on a non-2xx: an address the
+service cannot parse comes back as a 400 with `success?` false. Calling it again
+for the same address changes nothing and returns `obfuscated?` false. A blank
+email raises `ArgumentError`.
+
 ## License
 
 MIT

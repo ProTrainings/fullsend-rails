@@ -925,6 +925,97 @@ RSpec.describe Fullsend::Client do
     end
   end
 
+  describe "#obfuscate_recipient" do
+    let(:pseudonym) { "erased-0011223344556677@erased.invalid" }
+
+    let(:payload) do
+      {
+        alias: pseudonym, stopped_runs: 1, total: 7,
+        records: { email_events: 5, unsubscribes: 2 }
+      }
+    end
+
+    let(:stub_response) { double("response", code: "200", body: payload.to_json) }
+
+    it "POSTs the address in the body, not the path" do
+      described_class.new.obfuscate_recipient(" joe@gmail.com ")
+
+      expect(last_request).to be_a(Net::HTTP::Post)
+      expect(last_request.path).to eq("/v1/recipients/obfuscate")
+      expect(last_request["Authorization"]).to eq("Bearer test-token")
+      expect(JSON.parse(last_request.body)).to eq("email" => "joe@gmail.com")
+    end
+
+    it "is not app-scoped, even with an app configured" do
+      Fullsend.configure { |c| c.fullsend_app_id = "3163870b-4658-4d36-8a0d-e5c9d361800f" }
+
+      described_class.new.obfuscate_recipient("joe@gmail.com")
+
+      expect(JSON.parse(last_request.body)).not_to have_key("app_id")
+    end
+
+    it "reads the pseudonym and counts off the result" do
+      result = described_class.new.obfuscate_recipient("joe@gmail.com")
+
+      expect(result).to be_a(Fullsend::Client::ObfuscationResult)
+      expect(result.pseudonym).to eq(pseudonym)
+      expect(result.stopped_runs).to eq(1)
+      expect(result.total).to eq(7)
+      expect(result.records).to eq("email_events" => 5, "unsubscribes" => 2)
+      expect(result.obfuscated?).to be(true)
+    end
+
+    it "is not obfuscated? when the service held nothing for the address" do
+      allow(http).to receive(:request).and_return(
+        double("response", code: "200", body: { alias: pseudonym, stopped_runs: 0, total: 0, records: {} }.to_json)
+      )
+
+      expect(described_class.new.obfuscate_recipient("joe@gmail.com").obfuscated?).to be(false)
+    end
+
+    it "waits longer than the default read timeout" do
+      described_class.new.obfuscate_recipient("joe@gmail.com")
+
+      expect(http).to have_received(:read_timeout=).with(Fullsend::Client::OBFUSCATE_READ_TIMEOUT)
+    end
+
+    it "takes a read_timeout override" do
+      described_class.new.obfuscate_recipient("joe@gmail.com", read_timeout: 300)
+
+      expect(http).to have_received(:read_timeout=).with(300)
+    end
+
+    it "leaves other calls on the default read timeout" do
+      described_class.new.delete_unsubscribe(17)
+
+      expect(http).to have_received(:read_timeout=).with(Fullsend::Client::DEFAULT_READ_TIMEOUT)
+    end
+
+    it "raises ArgumentError for a blank email, without a request" do
+      expect { described_class.new.obfuscate_recipient("  ") }
+        .to raise_error(ArgumentError, /email/)
+
+      expect(captured).to be_empty
+    end
+
+    it "does not raise on a 400 for an address the service refuses" do
+      allow(http).to receive(:request).and_return(
+        double("response", code: "400", body: '"email must be a single bare address"')
+      )
+
+      result = described_class.new.obfuscate_recipient("not-an-address")
+
+      expect(result.success?).to be(false)
+      expect(result.obfuscated?).to be(false)
+      expect(result.pseudonym).to be_nil
+      expect(result.records).to eq({})
+    end
+
+    it "is reachable as Fullsend.obfuscate_recipient" do
+      expect(Fullsend.obfuscate_recipient("joe@gmail.com").pseudonym).to eq(pseudonym)
+    end
+  end
+
   # Minting the token is the host app's job, so a callable is the supported
   # way to hand the gem a token that expires.
   describe "a callable api_token" do
