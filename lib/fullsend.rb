@@ -74,6 +74,16 @@ module Fullsend
       Client.new.delete_unsubscribe(id)
     end
 
+    # Replace an address with a pseudonym everywhere the service stores it, for
+    # a "forget me" request. Irreversible, and not app-scoped.
+    #
+    #   Fullsend.obfuscate_recipient(user.email).pseudonym
+    #
+    # Returns a Fullsend::Client::ObfuscationResult. See Client#obfuscate_recipient.
+    def obfuscate_recipient(email, **options)
+      Client.new.obfuscate_recipient(email, **options)
+    end
+
     def configure
       yield(configuration)
     end
