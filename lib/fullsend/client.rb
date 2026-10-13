@@ -637,6 +637,15 @@ module Fullsend
         result["total"].to_i
       end
 
+      # True once the real address is on the SES account-level suppression
+      # list, which blocks it for every sender on the account. The service fails
+      # the call rather than skip it, so this is false only where the service
+      # runs with OBFUSCATE_SKIP_SES_SUPPRESSION (never production), or against a
+      # service too old to suppress at all.
+      def ses_suppressed?
+        result["ses_suppressed"] == true
+      end
+
       # False when the service held nothing for the address -- including on a
       # repeat call, which finds only the pseudonym and changes nothing.
       def obfuscated?

@@ -931,7 +931,7 @@ RSpec.describe Fullsend::Client do
     let(:payload) do
       {
         alias: pseudonym, stopped_runs: 1, total: 7,
-        records: { email_events: 5, unsubscribes: 2 }
+        records: { email_events: 5, unsubscribes: 2 }, ses_suppressed: true
       }
     end
 
@@ -963,6 +963,15 @@ RSpec.describe Fullsend::Client do
       expect(result.total).to eq(7)
       expect(result.records).to eq("email_events" => 5, "unsubscribes" => 2)
       expect(result.obfuscated?).to be(true)
+      expect(result.ses_suppressed?).to be(true)
+    end
+
+    it "is not ses_suppressed? where the service skipped SES, or predates it" do
+      [payload.merge(ses_suppressed: false), payload.except(:ses_suppressed)].each do |body|
+        allow(http).to receive(:request).and_return(double("response", code: "200", body: body.to_json))
+
+        expect(described_class.new.obfuscate_recipient("joe@gmail.com").ses_suppressed?).to be(false)
+      end
     end
 
     it "is not obfuscated? when the service held nothing for the address" do

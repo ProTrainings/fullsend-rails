@@ -709,11 +709,12 @@ address with a fresh random pseudonym everywhere it stores it.
 ```ruby
 result = Fullsend.obfuscate_recipient(user.email)
 
-result.obfuscated?   # => true
-result.pseudonym     # => "erased-1f3c09a2b4d5e6f7@erased.invalid"
-result.stopped_runs  # => 1
-result.records       # => { "email_events" => 12, "emails" => 4, ... }
-result.total         # => 37
+result.obfuscated?     # => true
+result.ses_suppressed? # => true
+result.pseudonym       # => "erased-1f3c09a2b4d5e6f7@erased.invalid"
+result.stopped_runs    # => 1
+result.records         # => { "email_events" => 12, "emails" => 4, ... }
+result.total           # => 37
 ```
 
 **It cannot be undone.** The pseudonym is random, not derived from the address,
@@ -721,6 +722,13 @@ so nothing maps it back. Keep it if anyone may need to find those rows later.
 
 What happens:
 
+- **The real address goes on the SES account-level suppression list first**,
+  with reason COMPLAINT, so nothing on the account can mail it again. That list
+  is the one place the real address is kept, on purpose. An address already
+  there keeps its existing reason. If SES refuses, nothing is rewritten and the
+  call fails, so it can simply be retried. `ses_suppressed?` is false only where
+  the service runs with `OBFUSCATE_SKIP_SES_SUPPRESSION` (staging; production
+  ignores it).
 - **Nothing is deleted.** Sends, events, webhook deliveries, automation runs,
   inbound events, conversions and unsubscribes all keep their rows, now under the
   pseudonym. Campaign metrics and revenue totals are unchanged.
@@ -732,10 +740,8 @@ What to know before calling it:
 
 - **It is not app-scoped.** The address is rewritten in every app, whatever
   `fullsend_app_id` is set to.
-- **Opt-outs move to the pseudonym too**, so they stop protecting the real
-  address. If the person signs up again, they start fresh.
-- **The SES suppression list is left alone**, so an address that hard-bounced
-  stays blocked.
+- **Opt-outs move to the pseudonym too.** The SES suppression is what keeps
+  the real address blocked after that, including if the person signs up again.
 
 Issues `POST /v1/recipients/obfuscate`, with the address in the body rather than
 the URL so it stays out of access logs. The rewrite can take a while on a large
